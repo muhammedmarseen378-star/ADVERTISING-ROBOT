@@ -11,6 +11,7 @@ import { evaluateAdvertisementSchedules, handleEvaluateScheduleApi, handleListSc
 import { handleGetGrokConfig, handleSaveGrokConfig, handleTestGrokConnection, handleListGrokModels, handleSelectGrokModel, handleAiProductResearch, handleCustomerVoiceQuestion } from './grok.js';
 import { handleRobotHeartbeat, handleCommandAck, handleDispatchCommand, handleEmergencyStop, handleResetEmergencyStop, handleGetRobotStatus, handleCameraHeartbeat, handleGetCameraStatus } from './robot.js';
 import { handleMediaUpload, handleMediaDownload } from './media.js';
+import { serveStaticAsset } from './ui.js';
 
 export default {
   /**
@@ -34,27 +35,22 @@ export default {
       });
     }
 
-    // Serve Static Assets if ASSETS binding is configured
+    // Serve Static Assets & Integrated Web UI
     if (!path.startsWith('/api/')) {
       if (env.ASSETS) {
         return await env.ASSETS.fetch(request);
       }
-      if (path === '/') {
+      const staticResponse = serveStaticAsset(path);
+      if (staticResponse) {
+        return staticResponse;
+      }
+      if (path === '/status' || path === '/health') {
         return jsonResponse({
           service: "AI Advertisement Robot Cloud Backend",
           institution: "NTTF Technical Training Centre (TTC)",
           project: "Diploma in Mechatronics Engineering - Final Year Group 1",
           status: "ONLINE",
-          timestamp: new Date().toISOString(),
-          endpoints: {
-            health: "/api/system/health",
-            activeAdvertisement: "/api/advertisements/active",
-            robotStatus: "/api/robot/status",
-            robotHeartbeat: "/api/robot/heartbeat",
-            grokConfig: "/api/ai/grok/config",
-            voiceAssistant: "/api/ai/voice/ask",
-            adminLogin: "/api/auth/login"
-          }
+          timestamp: new Date().toISOString()
         });
       }
     }
