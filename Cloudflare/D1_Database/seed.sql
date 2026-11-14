@@ -1,10 +1,15 @@
 -- ============================================================================
 -- AI ADVERTISEMENT ROBOT - INITIAL SEED DATA
 -- Mechatronics Engineering Final Year Project
--- Default Categories (Section 15 of Project Specification)
+-- Administrator Account: nttf.ttc.m3b.group1.project@gmail.com
+-- Password: group_1@nttf
 -- ============================================================================
 
--- Insert Default 21 Product Categories
+-- 1. Insert Pre-Configured Administrator Account (PBKDF2 SHA-256 with 100,000 iterations)
+INSERT OR REPLACE INTO admins (id, email, password_hash, salt, role, updated_at) VALUES
+('admin_nttf_01', 'nttf.ttc.m3b.group1.project@gmail.com', '62c2f5d5065463bbd80c4f8fb45b1230932b52142cf0bf1e045f565b81bb47de', 'cff010e1adc068af906840353003ce1f', 'superadmin', CURRENT_TIMESTAMP);
+
+-- 2. Insert Default 21 Product Categories
 INSERT OR IGNORE INTO categories (id, name, slug, description, display_order) VALUES
 ('cat_01', 'Food & Beverage', 'food-beverage', 'Packaged food, culinary items, snacks, and beverages', 1),
 ('cat_02', 'College / Education', 'college-education', 'College programs, technical training, admissions, and academic courses', 2),

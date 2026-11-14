@@ -1,0 +1,13 @@
+name = "ai-advertising-robot"
+main = "Workers/src/index.js"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+TIMEZONE = "Asia/Kolkata"
+DEFAULT_GROK_MODEL = "grok-2-1212"
+ADMIN_EMAIL = "nttf.ttc.m3b.group1.project@gmail.com"
+
+[triggers]
+crons = ["* * * * *"]
