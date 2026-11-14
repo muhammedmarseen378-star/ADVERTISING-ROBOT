@@ -360,7 +360,7 @@ export async function handleCustomerVoiceQuestion(request, env) {
   const config = await getActiveGrokConfig(env);
   if (!config.apiKey) {
     return jsonResponse({ 
-      answer: "I am sorry, the AI connection is currently offline. Please contact NTTF TTC administration.",
+      answer: "I am sorry, the AI connection is currently offline. Please contact the administrator.",
       language: language || 'en-IN'
     });
   }
@@ -393,7 +393,7 @@ Details: ${activeAd.detailed_desc || ''}.`;
   const userLang = language || 'en-IN';
   const isMalayalam = userLang.startsWith('ml') || /[\u0D00-\u0D7F]/.test(question);
 
-  const systemPrompt = `You are the AI Voice Assistant for an autonomous Mechatronics Advertisement Robot deployed at NTTF TTC campus.
+  const systemPrompt = `You are the AI Voice Assistant for an autonomous Smart Advertisement Robot.
 Context about the product currently on display:
 ${productContext}
 

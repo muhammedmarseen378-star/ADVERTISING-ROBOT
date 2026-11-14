@@ -46,9 +46,7 @@ export default {
       }
       if (path === '/status' || path === '/health') {
         return jsonResponse({
-          service: "AI Advertisement Robot Cloud Backend",
-          institution: "NTTF Technical Training Centre (TTC)",
-          project: "Diploma in Mechatronics Engineering - Final Year Group 1",
+          service: "AI Advertisement Robot Cloud Platform",
           status: "ONLINE",
           timestamp: new Date().toISOString()
         });

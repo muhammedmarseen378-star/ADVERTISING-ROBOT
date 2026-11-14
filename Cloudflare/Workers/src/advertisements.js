@@ -59,15 +59,15 @@ export async function handleGetActiveAdvertisement(request, env) {
   if (!activeAd) {
     return jsonResponse({
       id: 'welcome_default',
-      title: 'Welcome to NTTF Technical Training Centre',
-      category_name: 'College / Education',
-      poster_url: '/assets/ads/nttf_mechatronics.png',
-      short_desc: 'Autonomous Mechatronics AI Advertisement Robot',
-      short_desc_ml: 'എൻ.ടി.ടി.എഫ് ടെക്നിക്കൽ ട്രെയിനിംഗ് സെന്ററിലേക്ക് സ്വാഗതം',
-      detailed_desc: 'Live college advertisement kiosk and autonomous customer assistant.',
+      title: 'Welcome to AI Advertisement Robot',
+      category_name: 'Electronics & Robotics',
+      poster_url: '/assets/ads/gaming_laptop.svg',
+      short_desc: 'Autonomous Smart Advertisement Robot',
+      short_desc_ml: 'ഓട്ടോണമസ് സ്മാർട്ട് പരസ്യ റോബോട്ട്',
+      detailed_desc: 'Next-generation autonomous customer engagement and advertising system.',
       price: null,
       features: 'AI Voice Assistant • Autonomous Navigation • DWIN HMI Display',
-      promo_info: 'Admissions Open for 2026 Batch',
+      promo_info: 'Special Launch Offer 2026',
       display_page_id: 1,
       status: 'active',
       robot_online: false
