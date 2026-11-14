@@ -1,0 +1,29 @@
+name = "ai-advertising-robot"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "../../Website"
+binding = "ASSETS"
+
+[vars]
+ENVIRONMENT = "production"
+TIMEZONE = "Asia/Kolkata"
+DEFAULT_GROK_MODEL = "grok-2-1212"
+ADMIN_EMAIL = "nttf.ttc.m3b.group1.project@gmail.com"
+
+# Cron Triggers for Automatic Server-Side Advertisement Evaluation
+[triggers]
+crons = ["* * * * *"]
+
+# Cloudflare D1 Database Binding
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "ai_ad_robot_db"
+# database_id = "YOUR_D1_DATABASE_UUID_HERE"
+
+# Cloudflare R2 Storage Binding for Ad Posters & Product Media
+# [[r2_buckets]]
+# binding = "MEDIA_BUCKET"
+# bucket_name = "ai-ad-robot-media"
