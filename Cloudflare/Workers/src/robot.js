@@ -9,6 +9,32 @@ import { generateRandomHex, sha256Hex } from './crypto.js';
 const DEFAULT_MAIN_ROBOT_ID = 'ESP32_MAIN_ROBOT_01';
 const DEFAULT_CAM_ID = 'ESP32_CAM_AI_01';
 
+// Resilient In-Memory State for ESP32 Communication & Live Telemetry
+const memoryRobot = {
+  lastSeen: 0,
+  ipAddress: null,
+  firmwareVersion: '1.0.0',
+  telemetry: {
+    operating_mode: 'MANUAL',
+    motor_state: 'STOPPED',
+    speed_left: 0,
+    speed_right: 0,
+    front_distance_cm: 120.0,
+    obstacle_detected: 0,
+    person_detected: 0,
+    tracking_active: 0,
+    tracking_id: 0,
+    target_pos_x: 0,
+    wifi_rssi: -58,
+    battery_volts: 12.6,
+    emergency_stopped: 0
+  },
+  emergencyStopActive: false,
+  activeAdId: null,
+  activePageId: 1,
+  pendingCommands: []
+};
+
 /**
  * Verify Device Authentication Header
  */
@@ -51,64 +77,89 @@ export async function handleRobotHeartbeat(request, env) {
     const nowIso = new Date().toISOString();
     const ip = request.headers.get('CF-Connecting-IP') || '127.0.0.1';
 
-    // 1. Update devices table
-    await env.DB.prepare(`
-      UPDATE devices SET 
-        last_seen = CURRENT_TIMESTAMP, 
-        status = 'online', 
-        ip_address = ?,
-        firmware_version = ?
-      WHERE id = ?
-    `).bind(ip, data.firmwareVersion || '1.0.0', devAuth.deviceId).run();
+    // Update in-memory telemetry state for immediate real-time dashboard readout
+    memoryRobot.lastSeen = Date.now();
+    memoryRobot.ipAddress = ip;
+    memoryRobot.firmwareVersion = data.firmwareVersion || '1.0.0';
+    memoryRobot.telemetry = {
+      operating_mode: data.operatingMode || 'MANUAL',
+      motor_state: data.motorState || 'STOPPED',
+      speed_left: data.speedLeft || 0,
+      speed_right: data.speedRight || 0,
+      front_distance_cm: data.frontDistanceCm !== undefined ? parseFloat(data.frontDistanceCm) : 120.0,
+      obstacle_detected: data.obstacleDetected ? 1 : 0,
+      person_detected: data.personDetected ? 1 : 0,
+      tracking_active: data.trackingActive ? 1 : 0,
+      tracking_id: data.trackingId || 0,
+      target_pos_x: data.targetPosX || 0,
+      wifi_rssi: data.wifiRssi || -58,
+      battery_volts: data.batteryVolts !== undefined ? parseFloat(data.batteryVolts) : 12.6,
+      emergency_stopped: data.emergencyStopped ? 1 : 0
+    };
 
-    // 2. Record telemetry
-    const telemId = generateRandomHex(16);
-    await env.DB.prepare(`
-      INSERT INTO robot_telemetry (
-        id, device_id, operating_mode, motor_state, speed_left, speed_right,
-        front_distance_cm, obstacle_detected, person_detected, tracking_active,
-        tracking_id, target_pos_x, wifi_rssi, battery_volts, emergency_stopped, error_flags
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      telemId,
-      devAuth.deviceId,
-      data.operatingMode || 'MANUAL',
-      data.motorState || 'STOPPED',
-      data.speedLeft || 0,
-      data.speedRight || 0,
-      data.frontDistanceCm !== undefined ? parseFloat(data.frontDistanceCm) : 0.0,
-      data.obstacleDetected ? 1 : 0,
-      data.personDetected ? 1 : 0,
-      data.trackingActive ? 1 : 0,
-      data.trackingId || 0,
-      data.targetPosX || 0,
-      data.wifiRssi || 0,
-      data.batteryVolts !== undefined ? parseFloat(data.batteryVolts) : null,
-      data.emergencyStopped ? 1 : 0,
-      data.errorFlags || 'NONE'
-    ).run();
+    let isEStopActive = memoryRobot.emergencyStopActive;
+    let activeAdId = memoryRobot.activeAdId || null;
+    let displayPageId = memoryRobot.activePageId || 1;
+    let commandsToDispatch = [];
 
-    // 3. Fetch active advertisement and emergency stop flag
-    const activeSetting = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'active_ad_id'").first();
-    const pageSetting = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'active_ad_page_id'").first();
-    const estopSetting = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'emergency_stop_active'").first();
+    // Optional D1 persistence if DB is attached
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`
+          UPDATE devices SET 
+            last_seen = CURRENT_TIMESTAMP, 
+            status = 'online', 
+            ip_address = ?,
+            firmware_version = ?
+          WHERE id = ?
+        `).bind(ip, data.firmwareVersion || '1.0.0', devAuth.deviceId).run();
 
-    const isEStopActive = estopSetting?.value === 'true';
+        const telemId = generateRandomHex(16);
+        await env.DB.prepare(`
+          INSERT INTO robot_telemetry (
+            id, device_id, operating_mode, motor_state, speed_left, speed_right,
+            front_distance_cm, obstacle_detected, person_detected, tracking_active,
+            tracking_id, target_pos_x, wifi_rssi, battery_volts, emergency_stopped, error_flags
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          telemId, devAuth.deviceId, data.operatingMode || 'MANUAL', data.motorState || 'STOPPED',
+          data.speedLeft || 0, data.speedRight || 0,
+          data.frontDistanceCm !== undefined ? parseFloat(data.frontDistanceCm) : 0.0,
+          data.obstacleDetected ? 1 : 0, data.personDetected ? 1 : 0,
+          data.trackingActive ? 1 : 0, data.trackingId || 0, data.targetPosX || 0,
+          data.wifiRssi || 0, data.batteryVolts !== undefined ? parseFloat(data.batteryVolts) : null,
+          data.emergencyStopped ? 1 : 0, data.errorFlags || 'NONE'
+        ).run();
 
-    // 4. Retrieve pending unexpired commands for this robot
-    // Movement commands must be within validity window (expires_at > now)
-    const pendingCommands = await env.DB.prepare(`
-      SELECT id, command_type, payload_json, expires_at 
-      FROM robot_commands 
-      WHERE device_id = ? AND status = 'PENDING' AND expires_at > ?
-      ORDER BY created_at ASC
-    `).bind(devAuth.deviceId, nowIso).all();
+        const activeSetting = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'active_ad_id'").first();
+        const pageSetting = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'active_ad_page_id'").first();
+        const estopSetting = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'emergency_stop_active'").first();
 
-    // Mark retrieved commands as ACKNOWLEDGED
-    if (pendingCommands.results && pendingCommands.results.length > 0) {
-      for (const cmd of pendingCommands.results) {
-        await env.DB.prepare("UPDATE robot_commands SET status = 'DISPATCHED' WHERE id = ?").bind(cmd.id).run();
+        if (estopSetting?.value) isEStopActive = estopSetting.value === 'true';
+        if (activeSetting?.value) activeAdId = activeSetting.value;
+        if (pageSetting?.value) displayPageId = parseInt(pageSetting.value);
+
+        const pendingCommands = await env.DB.prepare(`
+          SELECT id, command_type, payload_json, expires_at 
+          FROM robot_commands 
+          WHERE device_id = ? AND status = 'PENDING' AND expires_at > ?
+          ORDER BY created_at ASC
+        `).bind(devAuth.deviceId, nowIso).all();
+
+        if (pendingCommands?.results?.length > 0) {
+          commandsToDispatch = pendingCommands.results;
+          for (const cmd of pendingCommands.results) {
+            await env.DB.prepare("UPDATE robot_commands SET status = 'DISPATCHED' WHERE id = ?").bind(cmd.id).run();
+          }
+        }
+      } catch (dbErr) {
+        // Fall back to memory dispatch
       }
+    }
+
+    // Merge in-memory queued commands if DB didn't supply them
+    if (commandsToDispatch.length === 0 && memoryRobot.pendingCommands.length > 0) {
+      commandsToDispatch = memoryRobot.pendingCommands.splice(0, memoryRobot.pendingCommands.length);
     }
 
     return jsonResponse({
@@ -116,10 +167,10 @@ export async function handleRobotHeartbeat(request, env) {
       timestamp: nowIso,
       emergencyStopActive: isEStopActive,
       activeAdvertisement: {
-        adId: activeSetting?.value || 'ad_demo_01',
-        displayPageId: parseInt(pageSetting?.value || '1')
+        adId: activeAdId,
+        displayPageId: displayPageId
       },
-      commands: pendingCommands.results || []
+      commands: commandsToDispatch
     });
   } catch (err) {
     return jsonResponse({ error: 'Heartbeat processing failed: ' + err.message }, 500);
@@ -158,8 +209,7 @@ export async function handleDispatchCommand(request, env) {
   if (!commandType) return jsonResponse({ error: 'commandType is required' }, 400);
 
   // Check if E-stop is active: If so, reject movement commands
-  const estop = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'emergency_stop_active'").first();
-  if (estop?.value === 'true' && commandType === 'MOVE') {
+  if (memoryRobot.emergencyStopActive && commandType === 'MOVE') {
     return jsonResponse({ error: 'Emergency Stop is currently active. Reset Emergency Stop before dispatching movement.' }, 403);
   }
 
@@ -167,10 +217,23 @@ export async function handleDispatchCommand(request, env) {
   const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
   const commandId = `cmd_${generateRandomHex(8)}`;
 
-  await env.DB.prepare(`
-    INSERT INTO robot_commands (id, device_id, command_type, payload_json, status, expires_at)
-    VALUES (?, ?, ?, ?, 'PENDING', ?)
-  `).bind(commandId, DEFAULT_MAIN_ROBOT_ID, commandType, JSON.stringify(payload || {}), expiresAt).run();
+  const cmdObj = {
+    id: commandId,
+    command_type: commandType,
+    payload_json: JSON.stringify(payload || {}),
+    expires_at: expiresAt
+  };
+
+  memoryRobot.pendingCommands.push(cmdObj);
+
+  if (env.DB) {
+    try {
+      await env.DB.prepare(`
+        INSERT INTO robot_commands (id, device_id, command_type, payload_json, status, expires_at)
+        VALUES (?, ?, ?, ?, 'PENDING', ?)
+      `).bind(commandId, DEFAULT_MAIN_ROBOT_ID, commandType, JSON.stringify(payload || {}), expiresAt).run();
+    } catch (e) {}
+  }
 
   return jsonResponse({
     success: true,
@@ -191,22 +254,29 @@ export async function handleEmergencyStop(request, env) {
   const expiresAt = new Date(Date.now() + 60000).toISOString();
   const commandId = `estop_${generateRandomHex(8)}`;
 
-  // Atomically lock system settings, expire pending move commands, and queue urgent ESTOP
-  await env.DB.batch([
-    env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('emergency_stop_active', 'true')"),
-    env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('robot_operating_mode', 'EMERGENCY_STOP')"),
-    env.DB.prepare("UPDATE robot_commands SET status = 'EXPIRED' WHERE status = 'PENDING' AND command_type = 'MOVE'"),
-    env.DB.prepare(`
-      INSERT INTO robot_commands (id, device_id, command_type, payload_json, status, expires_at)
-      VALUES (?, ?, 'EMERGENCY_STOP', '{}', 'PENDING', ?)
-    `).bind(commandId, DEFAULT_MAIN_ROBOT_ID, expiresAt),
-    env.DB.prepare("INSERT INTO activity_logs (id, actor, action, details) VALUES (?, ?, ?, ?)").bind(
-      generateRandomHex(16),
-      `admin:${admin.email}`,
-      'EMERGENCY_STOP_TRIGGERED',
-      'EMERGENCY STOP ACTIVATED from Admin Dashboard. Both motors commanded to halt.'
-    )
-  ]);
+  memoryRobot.emergencyStopActive = true;
+  memoryRobot.telemetry.operating_mode = 'EMERGENCY_STOP';
+  memoryRobot.telemetry.emergency_stopped = 1;
+  memoryRobot.pendingCommands = [{
+    id: commandId,
+    command_type: 'EMERGENCY_STOP',
+    payload_json: '{}',
+    expires_at: expiresAt
+  }];
+
+  if (env.DB) {
+    try {
+      await env.DB.batch([
+        env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('emergency_stop_active', 'true')"),
+        env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('robot_operating_mode', 'EMERGENCY_STOP')"),
+        env.DB.prepare("UPDATE robot_commands SET status = 'EXPIRED' WHERE status = 'PENDING' AND command_type = 'MOVE'"),
+        env.DB.prepare(`
+          INSERT INTO robot_commands (id, device_id, command_type, payload_json, status, expires_at)
+          VALUES (?, ?, 'EMERGENCY_STOP', '{}', 'PENDING', ?)
+        `).bind(commandId, DEFAULT_MAIN_ROBOT_ID, expiresAt)
+      ]);
+    } catch (e) {}
+  }
 
   return jsonResponse({
     success: true,
@@ -226,20 +296,28 @@ export async function handleResetEmergencyStop(request, env) {
   const commandId = `reset_${generateRandomHex(8)}`;
   const expiresAt = new Date(Date.now() + 60000).toISOString();
 
-  await env.DB.batch([
-    env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('emergency_stop_active', 'false')"),
-    env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('robot_operating_mode', 'MANUAL')"),
-    env.DB.prepare(`
-      INSERT INTO robot_commands (id, device_id, command_type, payload_json, status, expires_at)
-      VALUES (?, ?, 'RESET_ESTOP', '{}', 'PENDING', ?)
-    `).bind(commandId, DEFAULT_MAIN_ROBOT_ID, expiresAt),
-    env.DB.prepare("INSERT INTO activity_logs (id, actor, action, details) VALUES (?, ?, ?, ?)").bind(
-      generateRandomHex(16),
-      `admin:${admin.email}`,
-      'EMERGENCY_STOP_RESET',
-      'Emergency Stop reset by administrator. System restored to safe Manual mode.'
-    )
-  ]);
+  memoryRobot.emergencyStopActive = false;
+  memoryRobot.telemetry.operating_mode = 'MANUAL';
+  memoryRobot.telemetry.emergency_stopped = 0;
+  memoryRobot.pendingCommands.push({
+    id: commandId,
+    command_type: 'RESET_ESTOP',
+    payload_json: '{}',
+    expires_at: expiresAt
+  });
+
+  if (env.DB) {
+    try {
+      await env.DB.batch([
+        env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('emergency_stop_active', 'false')"),
+        env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('robot_operating_mode', 'MANUAL')"),
+        env.DB.prepare(`
+          INSERT INTO robot_commands (id, device_id, command_type, payload_json, status, expires_at)
+          VALUES (?, ?, 'RESET_ESTOP', '{}', 'PENDING', ?)
+        `).bind(commandId, DEFAULT_MAIN_ROBOT_ID, expiresAt)
+      ]);
+    } catch (e) {}
+  }
 
   return jsonResponse({
     success: true,
@@ -255,7 +333,7 @@ export async function handleGetRobotStatus(request, env) {
   try {
     let device = null;
     let latestTelem = null;
-    let estop = null;
+    let estopVal = memoryRobot.emergencyStopActive;
 
     if (env.DB) {
       try {
@@ -263,65 +341,47 @@ export async function handleGetRobotStatus(request, env) {
         latestTelem = await env.DB.prepare(`
           SELECT * FROM robot_telemetry WHERE device_id = ? ORDER BY created_at DESC LIMIT 1
         `).bind(DEFAULT_MAIN_ROBOT_ID).first();
-        estop = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'emergency_stop_active'").first();
-      } catch (dbErr) {
-        // Table may be uninitialized
-      }
+        const estopRow = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'emergency_stop_active'").first();
+        if (estopRow?.value) estopVal = estopRow.value === 'true';
+      } catch (dbErr) {}
     }
 
-    // Determine if robot is truly online (heartbeat received within last 15 seconds)
+    // Determine if robot is online (heartbeat received within last 30 seconds)
     let isOnline = false;
-    if (device && device.last_seen) {
+    if (device?.last_seen) {
       const diffSeconds = (Date.now() - new Date(device.last_seen).getTime()) / 1000;
-      isOnline = diffSeconds <= 15;
+      isOnline = diffSeconds <= 30;
+    } else if (memoryRobot.lastSeen > 0) {
+      const diffSeconds = (Date.now() - memoryRobot.lastSeen) / 1000;
+      isOnline = diffSeconds <= 30;
     }
 
     return jsonResponse({
+      online: isOnline,
       device: {
         id: DEFAULT_MAIN_ROBOT_ID,
         name: device?.device_name || 'SevenSemi ESP32-S3 Main Controller',
         status: isOnline ? 'online' : 'offline',
-        lastSeen: device?.last_seen || null,
-        firmwareVersion: device?.firmware_version || '1.0.0',
-        ipAddress: device?.ip_address || null
+        lastSeen: device?.last_seen || (memoryRobot.lastSeen ? new Date(memoryRobot.lastSeen).toISOString() : null),
+        firmwareVersion: device?.firmware_version || memoryRobot.firmwareVersion || '1.0.0',
+        ipAddress: device?.ip_address || memoryRobot.ipAddress || null
       },
-      telemetry: latestTelem || {
-        operating_mode: 'MANUAL',
-        motor_state: 'STOPPED',
-        speed_left: 0,
-        speed_right: 0,
-        front_distance_cm: 120.0,
-        obstacle_detected: 0,
-        person_detected: 0,
-        tracking_active: 0,
-        wifi_rssi: -58,
-        battery_volts: null,
-        emergency_stopped: estop?.value === 'true' ? 1 : 0
-      },
-      emergencyStopActive: estop?.value === 'true'
+      telemetry: latestTelem || memoryRobot.telemetry,
+      emergencyStopActive: estopVal,
+      activeAdId: memoryRobot.activeAdId
     });
   } catch (err) {
     return jsonResponse({
+      online: (Date.now() - memoryRobot.lastSeen) <= 30000,
       device: {
         id: DEFAULT_MAIN_ROBOT_ID,
         name: 'SevenSemi ESP32-S3 Main Controller',
-        status: 'offline',
-        lastSeen: null,
-        firmwareVersion: '1.0.0'
+        status: (Date.now() - memoryRobot.lastSeen) <= 30000 ? 'online' : 'offline',
+        lastSeen: memoryRobot.lastSeen ? new Date(memoryRobot.lastSeen).toISOString() : null,
+        firmwareVersion: memoryRobot.firmwareVersion
       },
-      telemetry: {
-        operating_mode: 'MANUAL',
-        motor_state: 'STOPPED',
-        speed_left: 0,
-        speed_right: 0,
-        front_distance_cm: 120.0,
-        obstacle_detected: 0,
-        person_detected: 0,
-        tracking_active: 0,
-        wifi_rssi: 0,
-        emergency_stopped: 0
-      },
-      emergencyStopActive: false
+      telemetry: memoryRobot.telemetry,
+      emergencyStopActive: memoryRobot.emergencyStopActive
     });
   }
 }

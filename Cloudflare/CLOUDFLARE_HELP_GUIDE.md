@@ -89,3 +89,17 @@ Cloudflare/
 2. **If Camera is Online**: You will see the active live video feed, AI person detection box, crosshair target, and 25 FPS metric.
 3. **If Camera is Offline**: You will see the realistic broadcast **"NO SIGNAL"** screen with animated SMPTE color bars and alert badge.
 4. You can use the **🔄 Toggle Online / Offline Signal** button at any time to demonstrate both states!
+
+---
+
+### 6. ESP32 Robot Hardware Communication & Manual Products
+
+1. **ESP32 Telemetry Connection:**
+   - Your ESP32-S3 main controller (`ESP32_Code/Main_Controller`) sends telemetry every 3 seconds to `/api/robot/heartbeat`.
+   - Headers: `X-Device-Id: ESP32_MAIN_ROBOT_01`, `X-Device-Key: SevenSemi_ESP32_Secret_2026`.
+   - The website dashboard reflects live HC-SR04 ultrasonic distance, motor states, person tracking, and battery levels.
+2. **Website Motor Controls & Emergency Stop:**
+   - Pressing the D-Pad buttons (Forward, Reverse, Left, Right) or Emergency Stop in the dashboard queues instant commands for the ESP32 to execute.
+3. **Manual Product Addition Only:**
+   - All dummy and pre-loaded products have been removed.
+   - Click **"+ Add Product"** in the **Products** section to manually create and manage your products. Every item is saved to local storage and synced to the cloud!

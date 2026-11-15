@@ -6,40 +6,7 @@
 import { authenticateAdmin, jsonResponse } from './auth.js';
 import { generateRandomHex } from './crypto.js';
 
-const DEFAULT_ADVERTISEMENTS = [
-  {
-    id: 'ad_demo_01',
-    title: 'Titan X-Pro RTX 4070 Gaming Laptop',
-    product_id: 'prod_01',
-    category_id: 'cat_03',
-    poster_url: '/assets/ads/gaming_laptop.svg',
-    short_desc: 'Unleash Maximum Power with Titan X-Pro RTX 4070 Workstation!',
-    short_desc_ml: 'ടൈറ്റൻ എക്സ്-പ്രോ ഹൈ പെർഫോമൻസ് ലാപ്ടോപ്പ് ഇപ്പോൾ ലഭ്യമാണ്!',
-    detailed_desc: 'Equipped with 14th Gen Intel Core i9, 32GB DDR5 RAM, and RTX 4070 8GB Graphics.',
-    price: 89999,
-    features: 'i9 14th Gen • RTX 4070 8GB • 32GB DDR5 • 165Hz QHD',
-    promo_info: 'Free Gaming Keyboard & Mouse Worth ₹5,999',
-    priority: 3,
-    status: 'active',
-    display_page_id: 1
-  },
-  {
-    id: 'ad_demo_02',
-    title: 'AeroPulse Hybrid ANC Headphones',
-    product_id: 'prod_02',
-    category_id: 'cat_05',
-    poster_url: '/assets/ads/smart_headphones.svg',
-    short_desc: 'Immerse Yourself in Pure Studio Sound with AeroPulse NC7',
-    short_desc_ml: 'ക്രിസ്റ്റൽ ക്ലിയർ സൗണ്ട് അനുഭവം നൽകുന്ന പുതിയ ഹെഡ്ഫോൺ',
-    detailed_desc: '45-hour battery life, active noise cancellation, and ergonomic memory-foam headband.',
-    price: 12499,
-    features: 'Active Noise Cancellation • 45h Battery • Bluetooth 5.3',
-    promo_info: 'Flat 20% Instant Discount This Week',
-    priority: 2,
-    status: 'scheduled',
-    display_page_id: 2
-  }
-];
+const DEFAULT_ADVERTISEMENTS = [];
 
 /**
  * GET /api/advertisements
@@ -57,14 +24,12 @@ export async function handleListAdvertisements(request, env) {
         LEFT JOIN advertisement_schedules s ON a.id = s.advertisement_id
         ORDER BY a.priority DESC, a.updated_at DESC
       `).all();
-      if (ads && ads.results && ads.results.length > 0) {
-        return jsonResponse({ advertisements: ads.results });
-      }
+      return jsonResponse({ advertisements: (ads && ads.results) ? ads.results : [] });
     }
   } catch (err) {
     // DB query error fallback
   }
-  return jsonResponse({ advertisements: DEFAULT_ADVERTISEMENTS });
+  return jsonResponse({ advertisements: [] });
 }
 
 /**

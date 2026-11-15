@@ -30,38 +30,7 @@ const DEFAULT_CATEGORIES = [
   { id: 'cat_21', name: 'Other / Custom', slug: 'other-custom', display_order: 21 }
 ];
 
-const DEFAULT_PRODUCTS = [
-  {
-    id: 'prod_01',
-    name: 'Titan X-Pro RTX 4070 Gaming Laptop',
-    category_id: 'cat_03',
-    category_name: 'Computer / Laptop',
-    brand: 'Titan Tech',
-    model: 'TX-9000',
-    price: 89999,
-    currency: 'INR',
-    description: 'Next-gen high-performance workstation featuring 16-Core Processor, RTX 4070 GPU, and 165Hz QHD Display.',
-    features_json: '["Intel Core i9 14th Gen", "NVIDIA RTX 4070 8GB", "32GB DDR5 RAM", "1TB Gen4 NVMe SSD"]',
-    promo_info: 'Free RGB Mechanical Keyboard worth ₹5,999!',
-    availability: 'In Stock',
-    image_url: '/assets/ads/gaming_laptop.svg'
-  },
-  {
-    id: 'prod_02',
-    name: 'AeroPulse Smart ANC Headphones',
-    category_id: 'cat_05',
-    category_name: 'Electronics',
-    brand: 'AeroAudio',
-    model: 'AP-NC7',
-    price: 12499,
-    currency: 'INR',
-    description: 'Active Noise Cancellation headphones with 45-hour battery life and studio acoustic drivers.',
-    features_json: '["Hybrid Active Noise Cancellation", "45-Hour Battery Life", "Bluetooth 5.3 Low Latency"]',
-    promo_info: 'Flat 20% discount available this week.',
-    availability: 'In Stock',
-    image_url: '/assets/ads/smart_headphones.svg'
-  }
-];
+const DEFAULT_PRODUCTS = [];
 
 /**
  * GET /api/categories
@@ -117,14 +86,12 @@ export async function handleListProducts(request, env) {
 
       const stmt = env.DB.prepare(query);
       const result = await stmt.bind(...params).all();
-      if (result && result.results && result.results.length > 0) {
-        return jsonResponse({ products: result.results });
-      }
+      return jsonResponse({ products: (result && result.results) ? result.results : [] });
     }
   } catch (err) {
     // DB not yet populated
   }
-  return jsonResponse({ products: DEFAULT_PRODUCTS });
+  return jsonResponse({ products: [] });
 }
 
 /**
