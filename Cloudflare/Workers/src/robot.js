@@ -366,10 +366,16 @@ export async function handleGetCameraStatus(request, env) {
   const admin = await authenticateAdmin(request, env);
   if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
 
-  const device = await env.DB.prepare('SELECT * FROM devices WHERE id = ?').bind(DEFAULT_CAM_ID).first();
-  const latestStatus = await env.DB.prepare(`
-    SELECT * FROM camera_status WHERE device_id = ? ORDER BY updated_at DESC LIMIT 1
-  `).bind(DEFAULT_CAM_ID).first();
+  let device = null;
+  let latestStatus = null;
+  if (env.DB) {
+    try {
+      device = await env.DB.prepare('SELECT * FROM devices WHERE id = ?').bind(DEFAULT_CAM_ID).first();
+      latestStatus = await env.DB.prepare(`
+        SELECT * FROM camera_status WHERE device_id = ? ORDER BY updated_at DESC LIMIT 1
+      `).bind(DEFAULT_CAM_ID).first();
+    } catch (e) {}
+  }
 
   let isOnline = false;
   if (device && device.last_seen) {

@@ -30,6 +30,9 @@ export function getKolkataTime() {
  * Runs via Cloudflare Cron Trigger (every 60 seconds) or via manual API trigger
  */
 export async function evaluateAdvertisementSchedules(env) {
+  if (!env || !env.DB) {
+    return { action: 'DB_NOT_CONFIGURED', message: 'D1 Database not yet linked.' };
+  }
   const currentTimeKolkata = getKolkataTime();
   const nowUtc = new Date().toISOString();
 
@@ -136,12 +139,19 @@ export async function handleEvaluateScheduleApi(request, env) {
  * GET /api/schedules (List all schedule rules)
  */
 export async function handleListSchedules(request, env) {
-  const schedules = await env.DB.prepare(`
-    SELECT s.*, a.title as ad_title, a.poster_url, a.display_page_id
-    FROM advertisement_schedules s
-    JOIN advertisements a ON s.advertisement_id = a.id
-    ORDER BY s.priority DESC, s.start_time ASC
-  `).all();
+  if (!env || !env.DB) {
+    return jsonResponse({ schedules: [] });
+  }
+  try {
+    const schedules = await env.DB.prepare(`
+      SELECT s.*, a.title as ad_title, a.poster_url, a.display_page_id
+      FROM advertisement_schedules s
+      JOIN advertisements a ON s.advertisement_id = a.id
+      ORDER BY s.priority DESC, s.start_time ASC
+    `).all();
 
-  return jsonResponse({ schedules: schedules.results || [] });
+    return jsonResponse({ schedules: schedules.results || [] });
+  } catch (e) {
+    return jsonResponse({ schedules: [] });
+  }
 }

@@ -1,6 +1,7 @@
 {
   "name": "ai-advertising-robot",
   "version": "1.0.0",
+  "type": "module",
   "description": "Cloudflare Worker Backend for AI Advertisement Robot",
   "main": "Workers/src/index.js",
   "scripts": {

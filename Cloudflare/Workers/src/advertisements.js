@@ -86,44 +86,24 @@ export async function handleGetActiveAdvertisement(request, env) {
         LIMIT 1
       `).first();
 
-      if (activeAd) return jsonResponse(activeAd);
+      if (activeAd) {
+        let parsedSpecs = {};
+        try {
+          if (activeAd.specs_json) parsedSpecs = JSON.parse(activeAd.specs_json);
+        } catch {}
+
+        return jsonResponse({
+          ...activeAd,
+          specs: parsedSpecs
+        });
+      }
     }
   } catch (err) {
     // DB query error fallback
   }
+
+  // Fallback to default advertisement if DB is unlinked or empty
   return jsonResponse(DEFAULT_ADVERTISEMENTS[0]);
-}
-  }
-
-  // 3. Fallback welcome message if database has no active ad
-  if (!activeAd) {
-    return jsonResponse({
-      id: 'welcome_default',
-      title: 'Welcome to AI Advertisement Robot',
-      category_name: 'Electronics & Robotics',
-      poster_url: '/assets/ads/gaming_laptop.svg',
-      short_desc: 'Autonomous Smart Advertisement Robot',
-      short_desc_ml: 'ഓട്ടോണമസ് സ്മാർട്ട് പരസ്യ റോബോട്ട്',
-      detailed_desc: 'Next-generation autonomous customer engagement and advertising system.',
-      price: null,
-      features: 'AI Voice Assistant • Autonomous Navigation • DWIN HMI Display',
-      promo_info: 'Special Launch Offer 2026',
-      display_page_id: 1,
-      status: 'active',
-      robot_online: false
-    });
-  }
-
-  // Parse JSON features/specs if needed
-  let parsedSpecs = {};
-  try {
-    if (activeAd.specs_json) parsedSpecs = JSON.parse(activeAd.specs_json);
-  } catch {}
-
-  return jsonResponse({
-    ...activeAd,
-    specs: parsedSpecs
-  });
 }
 
 /**
