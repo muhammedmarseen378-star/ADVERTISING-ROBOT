@@ -187,13 +187,17 @@ export async function handleCommandAck(request, env) {
   const { commandId, status, message } = await request.json();
   if (!commandId) return jsonResponse({ error: 'Command ID required' }, 400);
 
-  await env.DB.prepare(`
-    UPDATE robot_commands SET 
-      status = ?, 
-      executed_at = CURRENT_TIMESTAMP, 
-      ack_message = ? 
-    WHERE id = ? AND device_id = ?
-  `).bind(status || 'COMPLETED', message || 'Executed', commandId, devAuth.deviceId).run();
+  if (env.DB) {
+    try {
+      await env.DB.prepare(`
+        UPDATE robot_commands SET 
+          status = ?, 
+          executed_at = CURRENT_TIMESTAMP, 
+          ack_message = ? 
+        WHERE id = ? AND device_id = ?
+      `).bind(status || 'COMPLETED', message || 'Executed', commandId, devAuth.deviceId).run();
+    } catch (e) {}
+  }
 
   return jsonResponse({ success: true });
 }
@@ -396,25 +400,29 @@ export async function handleCameraHeartbeat(request, env) {
   const data = await request.json();
   const ip = request.headers.get('CF-Connecting-IP') || '127.0.0.1';
 
-  await env.DB.prepare(`
-    UPDATE devices SET 
-      last_seen = CURRENT_TIMESTAMP, 
-      status = 'online', 
-      ip_address = ? 
-    WHERE id = ?
-  `).bind(ip, devAuth.deviceId).run();
+  if (env.DB) {
+    try {
+      await env.DB.prepare(`
+        UPDATE devices SET 
+          last_seen = CURRENT_TIMESTAMP, 
+          status = 'online', 
+          ip_address = ? 
+        WHERE id = ?
+      `).bind(ip, devAuth.deviceId).run();
 
-  await env.DB.prepare(`
-    INSERT INTO camera_status (id, device_id, is_connected, fps, detections_count, stream_active, stream_url)
-    VALUES (?, ?, 1, ?, ?, ?, ?)
-  `).bind(
-    generateRandomHex(16),
-    devAuth.deviceId,
-    data.fps || 0,
-    data.detectionsCount || 0,
-    data.streamActive ? 1 : 0,
-    data.streamUrl || null
-  ).run();
+      await env.DB.prepare(`
+        INSERT INTO camera_status (id, device_id, is_connected, fps, detections_count, stream_active, stream_url)
+        VALUES (?, ?, 1, ?, ?, ?, ?)
+      `).bind(
+        generateRandomHex(16),
+        devAuth.deviceId,
+        data.fps || 0,
+        data.detectionsCount || 0,
+        data.streamActive ? 1 : 0,
+        data.streamUrl || null
+      ).run();
+    } catch (e) {}
+  }
 
   return jsonResponse({ status: 'OK' });
 }

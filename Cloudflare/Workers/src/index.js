@@ -37,6 +37,10 @@ export default {
 
     // Serve Static Assets & Integrated Web UI
     if (!path.startsWith('/api/')) {
+      // Redirect kiosk.html to admin.html as requested
+      if (path === '/kiosk.html' || path === '/kiosk') {
+        return Response.redirect(`${url.origin}/admin.html`, 302);
+      }
       if (env.ASSETS) {
         return await env.ASSETS.fetch(request);
       }
