@@ -4,7 +4,9 @@
 // ============================================================================
 
 import { generateRandomHex } from './crypto.js';
-import { jsonResponse } from './auth.js';
+import { authenticateAdmin, jsonResponse } from './auth.js';
+
+export const memorySchedules = [];
 
 /**
  * Get current ISO time string in Asia/Kolkata (IST = UTC + 5:30)
@@ -139,19 +141,141 @@ export async function handleEvaluateScheduleApi(request, env) {
  * GET /api/schedules (List all schedule rules)
  */
 export async function handleListSchedules(request, env) {
-  if (!env || !env.DB) {
-    return jsonResponse({ schedules: [] });
-  }
-  try {
-    const schedules = await env.DB.prepare(`
-      SELECT s.*, a.title as ad_title, a.poster_url, a.display_page_id
-      FROM advertisement_schedules s
-      JOIN advertisements a ON s.advertisement_id = a.id
-      ORDER BY s.priority DESC, s.start_time ASC
-    `).all();
+  if (env && env.DB) {
+    try {
+      const schedules = await env.DB.prepare(`
+        SELECT s.*, a.title as ad_title, a.poster_url, a.display_page_id
+        FROM advertisement_schedules s
+        JOIN advertisements a ON s.advertisement_id = a.id
+        ORDER BY s.priority DESC, s.start_time ASC
+      `).all();
 
-    return jsonResponse({ schedules: schedules.results || [] });
-  } catch (e) {
-    return jsonResponse({ schedules: [] });
+      if (schedules && schedules.results && schedules.results.length > 0) {
+        return jsonResponse({ schedules: schedules.results });
+      }
+    } catch (e) {}
+  }
+  return jsonResponse({ schedules: memorySchedules });
+}
+
+/**
+ * POST /api/schedules
+ */
+export async function handleCreateSchedule(request, env) {
+  const admin = await authenticateAdmin(request, env);
+  if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    const data = await request.json();
+    const newSchedule = {
+      id: data.id || `sched_${Date.now().toString(36)}`,
+      advertisement_id: data.advertisement_id || '',
+      ad_title: data.ad_title || '',
+      display_page_id: parseInt(data.display_page_id || 1),
+      start_time: data.start_time || '09:00',
+      end_time: data.end_time || '21:00',
+      duration_sec: parseInt(data.duration_sec || 30),
+      days: data.days || 'Every Day',
+      priority: parseInt(data.priority || 2),
+      is_active: data.is_active !== undefined ? (data.is_active ? 1 : 0) : 1,
+      created_at: new Date().toISOString()
+    };
+
+    memorySchedules.push(newSchedule);
+
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO advertisement_schedules (id, advertisement_id, start_time, end_time, duration_sec, priority, is_active)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(newSchedule.id, newSchedule.advertisement_id, newSchedule.start_time, newSchedule.end_time, newSchedule.duration_sec, newSchedule.priority, newSchedule.is_active).run();
+      } catch (e) {}
+    }
+
+    return jsonResponse({ success: true, schedule: newSchedule }, 201);
+  } catch (err) {
+    return jsonResponse({ error: err.message }, 500);
+  }
+}
+
+/**
+ * PUT /api/schedules/:id
+ */
+export async function handleUpdateSchedule(request, env, id) {
+  const admin = await authenticateAdmin(request, env);
+  if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    const data = await request.json();
+    const idx = memorySchedules.findIndex(s => s.id === id);
+    if (idx !== -1) {
+      memorySchedules[idx] = { ...memorySchedules[idx], ...data, updated_at: new Date().toISOString() };
+    }
+
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`
+          UPDATE advertisement_schedules 
+          SET start_time = ?, end_time = ?, duration_sec = ?, priority = ?, is_active = ?
+          WHERE id = ?
+        `).bind(data.start_time, data.end_time, data.duration_sec, data.priority, data.is_active ? 1 : 0, id).run();
+      } catch (e) {}
+    }
+
+    return jsonResponse({ success: true, schedule: memorySchedules[idx] || data });
+  } catch (err) {
+    return jsonResponse({ error: err.message }, 500);
+  }
+}
+
+/**
+ * DELETE /api/schedules/:id
+ */
+export async function handleDeleteSchedule(request, env, id) {
+  const admin = await authenticateAdmin(request, env);
+  if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    const idx = memorySchedules.findIndex(s => s.id === id);
+    if (idx !== -1) {
+      memorySchedules.splice(idx, 1);
+    }
+
+    if (env.DB) {
+      try {
+        await env.DB.prepare('DELETE FROM advertisement_schedules WHERE id = ?').bind(id).run();
+      } catch (e) {}
+    }
+
+    return jsonResponse({ success: true, message: 'Schedule deleted successfully.' });
+  } catch (err) {
+    return jsonResponse({ error: err.message }, 500);
+  }
+}
+
+/**
+ * POST /api/schedules/:id/toggle
+ */
+export async function handleToggleSchedule(request, env, id) {
+  const admin = await authenticateAdmin(request, env);
+  if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    const idx = memorySchedules.findIndex(s => s.id === id);
+    let activeVal = 1;
+    if (idx !== -1) {
+      memorySchedules[idx].is_active = memorySchedules[idx].is_active ? 0 : 1;
+      activeVal = memorySchedules[idx].is_active;
+    }
+
+    if (env.DB) {
+      try {
+        await env.DB.prepare('UPDATE advertisement_schedules SET is_active = ? WHERE id = ?').bind(activeVal, id).run();
+      } catch (e) {}
+    }
+
+    return jsonResponse({ success: true, schedule: memorySchedules[idx] });
+  } catch (err) {
+    return jsonResponse({ error: err.message }, 500);
   }
 }

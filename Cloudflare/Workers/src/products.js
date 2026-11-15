@@ -6,31 +6,10 @@
 import { authenticateAdmin, jsonResponse } from './auth.js';
 import { generateRandomHex } from './crypto.js';
 
-const DEFAULT_CATEGORIES = [
-  { id: 'cat_01', name: 'Food & Beverage', slug: 'food-beverage', display_order: 1 },
-  { id: 'cat_02', name: 'Education & Training', slug: 'education-training', display_order: 2 },
-  { id: 'cat_03', name: 'Computer / Laptop', slug: 'computer-laptop', display_order: 3 },
-  { id: 'cat_04', name: 'Mobile / Smartphone', slug: 'mobile-smartphone', display_order: 4 },
-  { id: 'cat_05', name: 'Electronics', slug: 'electronics', display_order: 5 },
-  { id: 'cat_06', name: 'Automobile & EV', slug: 'automobile-ev', display_order: 6 },
-  { id: 'cat_07', name: 'Hotel / Resort', slug: 'hotel-resort', display_order: 7 },
-  { id: 'cat_08', name: 'Restaurant / Cafe', slug: 'restaurant-cafe', display_order: 8 },
-  { id: 'cat_09', name: 'Clothing / Fashion', slug: 'clothing-fashion', display_order: 9 },
-  { id: 'cat_10', name: 'Home Appliances', slug: 'home-appliances', display_order: 10 },
-  { id: 'cat_11', name: 'Healthcare / Pharmacy', slug: 'healthcare-pharmacy', display_order: 11 },
-  { id: 'cat_12', name: 'Fitness / Gym', slug: 'fitness-gym', display_order: 12 },
-  { id: 'cat_13', name: 'Salon / Beauty', slug: 'salon-beauty', display_order: 13 },
-  { id: 'cat_14', name: 'Retail / Shopping', slug: 'retail-shopping', display_order: 14 },
-  { id: 'cat_15', name: 'Finance / Banking', slug: 'finance-banking', display_order: 15 },
-  { id: 'cat_16', name: 'Travel / Tourism', slug: 'travel-tourism', display_order: 16 },
-  { id: 'cat_17', name: 'Real Estate', slug: 'real-estate', display_order: 17 },
-  { id: 'cat_18', name: 'Service / Repair', slug: 'service-repair', display_order: 18 },
-  { id: 'cat_19', name: 'Coaching / Workshops', slug: 'coaching-workshops', display_order: 19 },
-  { id: 'cat_20', name: 'Gaming / Esports', slug: 'gaming-esports', display_order: 20 },
-  { id: 'cat_21', name: 'Other / Custom', slug: 'other-custom', display_order: 21 }
-];
+const DEFAULT_CATEGORIES = [];
 
-// Resilient In-Memory Product Storage
+// Resilient In-Memory Product & Category Storage
+export const memoryCategories = [];
 export const memoryProducts = [];
 
 /**
@@ -45,7 +24,96 @@ export async function handleListCategories(request, env) {
       }
     }
   } catch (err) {}
-  return jsonResponse({ categories: DEFAULT_CATEGORIES });
+  return jsonResponse({ categories: memoryCategories });
+}
+
+/**
+ * POST /api/categories
+ */
+export async function handleCreateCategory(request, env) {
+  const admin = await authenticateAdmin(request, env);
+  if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    const data = await request.json();
+    if (!data.name) return jsonResponse({ error: 'Category name is required' }, 400);
+
+    const newCat = {
+      id: data.id || `cat_${Date.now().toString(36)}`,
+      name: data.name,
+      slug: data.slug || data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      icon: data.icon || '🏷️',
+      display_order: memoryCategories.length + 1
+    };
+
+    memoryCategories.push(newCat);
+
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO categories (id, name, slug, display_order)
+          VALUES (?, ?, ?, ?)
+        `).bind(newCat.id, newCat.name, newCat.slug, newCat.display_order).run();
+      } catch (e) {}
+    }
+
+    return jsonResponse({ success: true, category: newCat }, 201);
+  } catch (err) {
+    return jsonResponse({ error: err.message }, 500);
+  }
+}
+
+/**
+ * PUT /api/categories/:id
+ */
+export async function handleUpdateCategory(request, env, id) {
+  const admin = await authenticateAdmin(request, env);
+  if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    const data = await request.json();
+    const idx = memoryCategories.findIndex(c => c.id === id);
+    if (idx !== -1) {
+      memoryCategories[idx] = { ...memoryCategories[idx], ...data };
+    }
+
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`
+          UPDATE categories SET name = ?, slug = ? WHERE id = ?
+        `).bind(data.name, data.slug || '', id).run();
+      } catch (e) {}
+    }
+
+    return jsonResponse({ success: true, category: memoryCategories[idx] || data });
+  } catch (err) {
+    return jsonResponse({ error: err.message }, 500);
+  }
+}
+
+/**
+ * DELETE /api/categories/:id
+ */
+export async function handleDeleteCategory(request, env, id) {
+  const admin = await authenticateAdmin(request, env);
+  if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    const idx = memoryCategories.findIndex(c => c.id === id);
+    if (idx !== -1) {
+      memoryCategories.splice(idx, 1);
+    }
+
+    if (env.DB) {
+      try {
+        await env.DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run();
+      } catch (e) {}
+    }
+
+    return jsonResponse({ success: true, message: 'Category deleted successfully.' });
+  } catch (err) {
+    return jsonResponse({ error: err.message }, 500);
+  }
 }
 
 /**
@@ -143,8 +211,8 @@ export async function handleCreateProduct(request, env) {
     }
 
     const id = data.id || `prod_${generateRandomHex(8)}`;
-    const cat = DEFAULT_CATEGORIES.find(c => c.id === data.category_id);
-    const categoryName = cat ? cat.name : 'General';
+    const cat = memoryCategories.find(c => c.id === data.category_id);
+    const categoryName = data.category_name || (cat ? cat.name : 'General');
 
     const newProduct = {
       id,

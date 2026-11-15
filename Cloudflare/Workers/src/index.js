@@ -5,9 +5,9 @@
 // ============================================================================
 
 import { handleLogin, handleLogout, handleSetupPassword, authenticateAdmin, jsonResponse } from './auth.js';
-import { handleListCategories, handleListProducts, handleGetProduct, handleCreateProduct, handleUpdateProduct, handleDeleteProduct, memoryProducts } from './products.js';
+import { handleListCategories, handleCreateCategory, handleUpdateCategory, handleDeleteCategory, handleListProducts, handleGetProduct, handleCreateProduct, handleUpdateProduct, handleDeleteProduct, memoryCategories, memoryProducts } from './products.js';
 import { handleListAdvertisements, handleGetActiveAdvertisement, handleCreateAdvertisement, handleUpdateAdvertisement, handleDeleteAdvertisement, handlePlayNow, handlePauseAdvertisement, handleResumeAdvertisement, handleAdvertisementHistory, memoryAds } from './advertisements.js';
-import { evaluateAdvertisementSchedules, handleEvaluateScheduleApi, handleListSchedules } from './scheduler.js';
+import { evaluateAdvertisementSchedules, handleEvaluateScheduleApi, handleListSchedules, handleCreateSchedule, handleUpdateSchedule, handleDeleteSchedule, handleToggleSchedule, memorySchedules } from './scheduler.js';
 import { handleGetGrokConfig, handleSaveGrokConfig, handleTestGrokConnection, handleListGrokModels, handleSelectGrokModel, handleAiProductResearch, handleCustomerVoiceQuestion } from './grok.js';
 import { handleRobotHeartbeat, handleCommandAck, handleDispatchCommand, handleEmergencyStop, handleResetEmergencyStop, handleGetRobotStatus, handleCameraHeartbeat, handleGetCameraStatus, memoryRobot } from './robot.js';
 import { handleMediaUpload, handleMediaDownload } from './media.js';
@@ -90,6 +90,17 @@ export default {
       if (path === '/api/categories' && method === 'GET') {
         return await handleListCategories(request, env);
       }
+      if (path === '/api/categories' && method === 'POST') {
+        return await handleCreateCategory(request, env);
+      }
+      if (path.startsWith('/api/categories/') && method === 'PUT') {
+        const id = path.replace('/api/categories/', '');
+        return await handleUpdateCategory(request, env, id);
+      }
+      if (path.startsWith('/api/categories/') && method === 'DELETE') {
+        const id = path.replace('/api/categories/', '');
+        return await handleDeleteCategory(request, env, id);
+      }
 
       // -------------------------------------------------------------
       // 3. Products Routes
@@ -157,6 +168,21 @@ export default {
       // -------------------------------------------------------------
       if (path === '/api/schedules' && method === 'GET') {
         return await handleListSchedules(request, env);
+      }
+      if (path === '/api/schedules' && method === 'POST') {
+        return await handleCreateSchedule(request, env);
+      }
+      if (path.startsWith('/api/schedules/') && path.endsWith('/toggle') && method === 'POST') {
+        const id = path.split('/')[3];
+        return await handleToggleSchedule(request, env, id);
+      }
+      if (path.startsWith('/api/schedules/') && method === 'PUT') {
+        const id = path.replace('/api/schedules/', '');
+        return await handleUpdateSchedule(request, env, id);
+      }
+      if (path.startsWith('/api/schedules/') && method === 'DELETE') {
+        const id = path.replace('/api/schedules/', '');
+        return await handleDeleteSchedule(request, env, id);
       }
       if (path === '/api/schedules/evaluate' && method === 'POST') {
         return await handleEvaluateScheduleApi(request, env);
