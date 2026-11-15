@@ -35,6 +35,16 @@ export const memoryRobot = {
   pendingCommands: []
 };
 
+// Resilient In-Memory State for Dedicated ESP32-S3 AI Camera
+export const memoryCamera = {
+  lastSeen: 0,
+  ipAddress: null,
+  fps: 25,
+  resolution: '1280x720',
+  streamActive: false,
+  streamUrl: null
+};
+
 /**
  * Verify Device Authentication Header
  */
@@ -404,6 +414,13 @@ export async function handleCameraHeartbeat(request, env) {
   const data = await request.json();
   const ip = request.headers.get('CF-Connecting-IP') || '127.0.0.1';
 
+  memoryCamera.lastSeen = Date.now();
+  memoryCamera.ipAddress = data.ip || ip;
+  memoryCamera.fps = data.fps || 25;
+  memoryCamera.resolution = data.resolution || '1280x720';
+  memoryCamera.streamActive = true;
+  memoryCamera.streamUrl = data.stream_url || data.streamUrl || `http://${data.ip || ip}:81/stream`;
+
   if (env.DB) {
     try {
       await env.DB.prepare(`
@@ -452,22 +469,26 @@ export async function handleGetCameraStatus(request, env) {
   let isOnline = false;
   if (device && device.last_seen) {
     const diffSeconds = (Date.now() - new Date(device.last_seen).getTime()) / 1000;
-    isOnline = diffSeconds <= 15;
+    isOnline = diffSeconds <= 20;
+  } else if (memoryCamera.lastSeen > 0) {
+    const diffSeconds = (Date.now() - memoryCamera.lastSeen) / 1000;
+    isOnline = diffSeconds <= 20;
   }
 
   return jsonResponse({
+    online: isOnline,
     device: {
       id: DEFAULT_CAM_ID,
       name: 'ESP32-S3 AI Vision Camera',
       status: isOnline ? 'online' : 'offline',
-      lastSeen: device?.last_seen || null
+      lastSeen: device?.last_seen || (memoryCamera.lastSeen ? new Date(memoryCamera.lastSeen).toISOString() : null)
     },
     camera: latestStatus || {
-      is_connected: 0,
-      fps: 0,
+      is_connected: isOnline ? 1 : 0,
+      fps: isOnline ? memoryCamera.fps : 0,
       detections_count: 0,
-      stream_active: 0,
-      stream_url: null
+      stream_active: isOnline ? 1 : 0,
+      stream_url: isOnline ? memoryCamera.streamUrl : null
     }
   });
 }
