@@ -31,7 +31,7 @@ const DEFAULT_CATEGORIES = [
 ];
 
 // Resilient In-Memory Product Storage
-const memoryProducts = [];
+export const memoryProducts = [];
 
 /**
  * GET /api/categories

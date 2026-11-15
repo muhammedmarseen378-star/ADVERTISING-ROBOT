@@ -10,7 +10,7 @@ const DEFAULT_MAIN_ROBOT_ID = 'ESP32_MAIN_ROBOT_01';
 const DEFAULT_CAM_ID = 'ESP32_CAM_AI_01';
 
 // Resilient In-Memory State for ESP32 Communication & Live Telemetry
-const memoryRobot = {
+export const memoryRobot = {
   lastSeen: 0,
   ipAddress: null,
   firmwareVersion: '1.0.0',

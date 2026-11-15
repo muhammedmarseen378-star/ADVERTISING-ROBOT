@@ -1,8 +1,8 @@
 {
-  "name": "ai-ad-robot-backend",
+  "name": "advertising-robot",
   "version": "1.0.0",
   "type": "module",
-  "description": "Cloudflare Worker Backend for AI Advertisement Robot with D1, R2, and Grok AI Integration",
+  "description": "Cloudflare Worker Backend for AI Advertisement Robot with D1, R2, and Groq AI Integration",
   "main": "src/index.js",
   "scripts": {
     "dev": "wrangler dev",

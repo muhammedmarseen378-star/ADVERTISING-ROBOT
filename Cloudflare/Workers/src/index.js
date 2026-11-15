@@ -5,11 +5,11 @@
 // ============================================================================
 
 import { handleLogin, handleLogout, handleSetupPassword, authenticateAdmin, jsonResponse } from './auth.js';
-import { handleListCategories, handleListProducts, handleGetProduct, handleCreateProduct, handleUpdateProduct, handleDeleteProduct } from './products.js';
-import { handleListAdvertisements, handleGetActiveAdvertisement, handleCreateAdvertisement, handleUpdateAdvertisement, handleDeleteAdvertisement, handlePlayNow, handlePauseAdvertisement, handleResumeAdvertisement, handleAdvertisementHistory } from './advertisements.js';
+import { handleListCategories, handleListProducts, handleGetProduct, handleCreateProduct, handleUpdateProduct, handleDeleteProduct, memoryProducts } from './products.js';
+import { handleListAdvertisements, handleGetActiveAdvertisement, handleCreateAdvertisement, handleUpdateAdvertisement, handleDeleteAdvertisement, handlePlayNow, handlePauseAdvertisement, handleResumeAdvertisement, handleAdvertisementHistory, memoryAds } from './advertisements.js';
 import { evaluateAdvertisementSchedules, handleEvaluateScheduleApi, handleListSchedules } from './scheduler.js';
 import { handleGetGrokConfig, handleSaveGrokConfig, handleTestGrokConnection, handleListGrokModels, handleSelectGrokModel, handleAiProductResearch, handleCustomerVoiceQuestion } from './grok.js';
-import { handleRobotHeartbeat, handleCommandAck, handleDispatchCommand, handleEmergencyStop, handleResetEmergencyStop, handleGetRobotStatus, handleCameraHeartbeat, handleGetCameraStatus } from './robot.js';
+import { handleRobotHeartbeat, handleCommandAck, handleDispatchCommand, handleEmergencyStop, handleResetEmergencyStop, handleGetRobotStatus, handleCameraHeartbeat, handleGetCameraStatus, memoryRobot } from './robot.js';
 import { handleMediaUpload, handleMediaDownload } from './media.js';
 import { serveStaticAsset } from './ui.js';
 
@@ -35,11 +35,18 @@ export default {
       });
     }
 
-    // Serve Static Assets & Integrated Web UI
+    // Serve Static Assets & Integrated Web UI (Matches Render 1:1)
     if (!path.startsWith('/api/')) {
-      // Redirect kiosk.html to admin.html as requested
       if (path === '/kiosk.html' || path === '/kiosk') {
         return Response.redirect(`${url.origin}/admin.html`, 302);
+      }
+      if (path === '/' || path === '/index.html' || path === '/login' || path === '/login.html') {
+        const res = serveStaticAsset('/login.html');
+        if (res) return res;
+      }
+      if (path === '/admin' || path === '/admin.html') {
+        const res = serveStaticAsset('/admin.html');
+        if (res) return res;
       }
       const staticResponse = serveStaticAsset(path);
       if (staticResponse) {
@@ -228,35 +235,36 @@ export default {
       // 11. System Statistics & Logs
       // -------------------------------------------------------------
       if (path === '/api/system/stats' && method === 'GET') {
-        let stats = {
-          productsTotal: 4,
-          advertisementsTotal: 4,
-          advertisementsActive: 1,
-          advertisementsPaused: 0,
-          customerQuestionsTotal: 0,
-          aiCallsTotal: 0
-        };
-        try {
-          if (env.DB) {
+        let pCount = memoryProducts.length;
+        let aCount = memoryAds.length;
+        let activeCount = memoryAds.filter(a => a.status === 'active').length;
+        let pausedCount = memoryAds.filter(a => a.status === 'paused').length;
+
+        if (env.DB) {
+          try {
             const prodCount = await env.DB.prepare('SELECT COUNT(*) as c FROM products').first();
             const adCount = await env.DB.prepare('SELECT COUNT(*) as c FROM advertisements').first();
             const activeAdCount = await env.DB.prepare("SELECT COUNT(*) as c FROM advertisements WHERE status = 'active'").first();
             const pausedAdCount = await env.DB.prepare("SELECT COUNT(*) as c FROM advertisements WHERE status = 'paused'").first();
-            const questionCount = await env.DB.prepare('SELECT COUNT(*) as c FROM customer_questions').first();
-            const aiCalls = await env.DB.prepare('SELECT COUNT(*) as c FROM ai_logs').first();
-            stats = {
-              productsTotal: prodCount?.c ?? 4,
-              advertisementsTotal: adCount?.c ?? 4,
-              advertisementsActive: activeAdCount?.c ?? 1,
-              advertisementsPaused: pausedAdCount?.c ?? 0,
-              customerQuestionsTotal: questionCount?.c ?? 0,
-              aiCallsTotal: aiCalls?.c ?? 0
-            };
-          }
-        } catch (e) {
-          // Safe fallback
+            if (prodCount?.c !== undefined) pCount = prodCount.c;
+            if (adCount?.c !== undefined) aCount = adCount.c;
+            if (activeAdCount?.c !== undefined) activeCount = activeAdCount.c;
+            if (pausedAdCount?.c !== undefined) pausedCount = pausedAdCount.c;
+          } catch (e) {}
         }
-        return jsonResponse(stats);
+
+        return jsonResponse({
+          productsTotal: pCount,
+          advertisementsTotal: aCount,
+          products_count: pCount,
+          advertisements_count: aCount,
+          advertisementsActive: activeCount,
+          advertisementsPaused: pausedCount,
+          active_ad_id: memoryRobot.activeAdId || null,
+          robot_online: true,
+          operating_mode: memoryRobot.telemetry.operating_mode || 'MANUAL',
+          emergency_stop: memoryRobot.emergencyStopActive || false
+        });
       }
 
       if (path === '/api/system/logs' && method === 'GET') {

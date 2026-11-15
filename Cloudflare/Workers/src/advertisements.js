@@ -6,8 +6,8 @@
 import { authenticateAdmin, jsonResponse } from './auth.js';
 import { generateRandomHex } from './crypto.js';
 
-const memoryAds = [];
-let activeAdId = null;
+export const memoryAds = [];
+export let activeAdId = null;
 
 /**
  * GET /api/advertisements
