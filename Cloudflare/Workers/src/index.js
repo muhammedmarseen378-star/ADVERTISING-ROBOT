@@ -12,6 +12,7 @@ import { handleGetGrokConfig, handleSaveGrokConfig, handleTestGrokConnection, ha
 import { handleRobotHeartbeat, handleCommandAck, handleDispatchCommand, handleEmergencyStop, handleResetEmergencyStop, handleGetRobotStatus, handleCameraHeartbeat, handleGetCameraStatus, memoryRobot } from './robot.js';
 import { handleMediaUpload, handleMediaDownload } from './media.js';
 import { serveStaticAsset } from './ui.js';
+import { ensureDatabase } from './db.js';
 
 export default {
   /**
@@ -66,6 +67,9 @@ export default {
 
     // Resilient API routing with automatic fallback
     try {
+      if (env && env.DB) {
+        await ensureDatabase(env);
+      }
       // -------------------------------------------------------------
       // 1. Authentication Routes
       // -------------------------------------------------------------
@@ -335,6 +339,9 @@ export default {
    * Evaluates ad schedule automatically every minute in Asia/Kolkata timezone
    */
   async scheduled(event, env, ctx) {
+    if (env && env.DB) {
+      await ensureDatabase(env);
+    }
     ctx.waitUntil(evaluateAdvertisementSchedules(env));
   }
 };
