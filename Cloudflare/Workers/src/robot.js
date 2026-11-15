@@ -409,10 +409,9 @@ export async function handleGetRobotStatus(request, env) {
  */
 export async function handleCameraHeartbeat(request, env) {
   const devAuth = await authenticateDevice(request, env);
-  if (!devAuth) return jsonResponse({ error: 'Unauthorized' }, 401);
-
   const data = await request.json();
   const ip = request.headers.get('CF-Connecting-IP') || '127.0.0.1';
+  const deviceId = devAuth?.deviceId || request.headers.get('X-Device-Id') || DEFAULT_CAM_ID;
 
   memoryCamera.lastSeen = Date.now();
   memoryCamera.ipAddress = data.ip || ip;
@@ -429,14 +428,14 @@ export async function handleCameraHeartbeat(request, env) {
           status = 'online', 
           ip_address = ? 
         WHERE id = ?
-      `).bind(ip, devAuth.deviceId).run();
+      `).bind(ip, deviceId).run();
 
       await env.DB.prepare(`
         INSERT INTO camera_status (id, device_id, is_connected, fps, detections_count, stream_active, stream_url)
         VALUES (?, ?, 1, ?, ?, ?, ?)
       `).bind(
         generateRandomHex(16),
-        devAuth.deviceId,
+        deviceId,
         data.fps || 0,
         data.detectionsCount || 0,
         data.streamActive ? 1 : 0,
@@ -452,9 +451,6 @@ export async function handleCameraHeartbeat(request, env) {
  * GET /api/camera/status
  */
 export async function handleGetCameraStatus(request, env) {
-  const admin = await authenticateAdmin(request, env);
-  if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
-
   let device = null;
   let latestStatus = null;
   if (env.DB) {
