@@ -1,4 +1,4 @@
-name = "ai-advertising-robot"
+name = "advertising-robot"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
 compatibility_flags = ["nodejs_compat"]
@@ -6,8 +6,13 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 TIMEZONE = "Asia/Kolkata"
-DEFAULT_GROK_MODEL = "grok-2-1212"
+DEFAULT_GROK_MODEL = "llama-3.3-70b-versatile"
 ADMIN_EMAIL = "nttf.ttc.m3b.group1.project@gmail.com"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai_ad_robot_db"
+database_id = "ai_ad_robot_db"
 
 # Cron Trigger for Server-Side Advertisement Evaluation
 [triggers]

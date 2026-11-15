@@ -50,13 +50,17 @@ async function authenticateDevice(request, env) {
     return { deviceId, authorized: true };
   }
 
-  // 2. Check against hash in devices table
-  const keyHash = await sha256Hex(deviceKey);
-  const dev = await env.DB.prepare('SELECT id, device_type FROM devices WHERE id = ? AND api_key_hash = ?')
-    .bind(deviceId, keyHash).first();
+  // 2. Check against hash in devices table if DB is available
+  if (env.DB) {
+    try {
+      const keyHash = await sha256Hex(deviceKey);
+      const dev = await env.DB.prepare('SELECT id, device_type FROM devices WHERE id = ? AND api_key_hash = ?')
+        .bind(deviceId, keyHash).first();
 
-  if (dev) {
-    return { deviceId: dev.id, deviceType: dev.device_type, authorized: true };
+      if (dev) {
+        return { deviceId: dev.id, deviceType: dev.device_type, authorized: true };
+      }
+    } catch (e) {}
   }
 
   return null;

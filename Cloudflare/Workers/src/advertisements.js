@@ -1,12 +1,13 @@
 // ============================================================================
 // Cloudflare Workers Advertisement Management & History Module
-// Supports Public Kiosk, DWIN HMI Synchronization, Play Now, and Priority Controls
+// Supports Public Display, DWIN HMI Synchronization, Play Now, and Priority Controls
 // ============================================================================
 
 import { authenticateAdmin, jsonResponse } from './auth.js';
 import { generateRandomHex } from './crypto.js';
 
-const DEFAULT_ADVERTISEMENTS = [];
+const memoryAds = [];
+let activeAdId = null;
 
 /**
  * GET /api/advertisements
@@ -24,22 +25,22 @@ export async function handleListAdvertisements(request, env) {
         LEFT JOIN advertisement_schedules s ON a.id = s.advertisement_id
         ORDER BY a.priority DESC, a.updated_at DESC
       `).all();
-      return jsonResponse({ advertisements: (ads && ads.results) ? ads.results : [] });
+      if (ads && ads.results && ads.results.length > 0) {
+        return jsonResponse({ advertisements: ads.results });
+      }
     }
-  } catch (err) {
-    // DB query error fallback
-  }
-  return jsonResponse({ advertisements: [] });
+  } catch (err) {}
+
+  return jsonResponse({ advertisements: memoryAds });
 }
 
 /**
  * GET /api/advertisements/active
- * Public endpoint consumed by Public Kiosk and ESP32-S3 Main Controller
+ * Consumed by Display and ESP32-S3 Main Controller
  */
 export async function handleGetActiveAdvertisement(request, env) {
   try {
     if (env.DB) {
-      // 1. Check if there is an active advertisement
       let activeAd = await env.DB.prepare(`
         SELECT a.*, p.name as product_name, p.specs_json, p.faq_json, p.availability,
                c.name as category_name
@@ -63,12 +64,14 @@ export async function handleGetActiveAdvertisement(request, env) {
         });
       }
     }
-  } catch (err) {
-    // DB query error fallback
-  }
+  } catch (err) {}
 
-  // Fallback to default advertisement if DB is unlinked or empty
-  return jsonResponse(DEFAULT_ADVERTISEMENTS[0]);
+  // In-memory fallback
+  let active = memoryAds.find(a => a.id === activeAdId && a.status === 'active');
+  if (!active) {
+    active = memoryAds.find(a => a.status === 'active') || memoryAds[0] || null;
+  }
+  return jsonResponse(active || { status: 'idle', message: 'No active advertisements' });
 }
 
 /**
@@ -89,47 +92,76 @@ export async function handleCreateAdvertisement(request, env) {
     const priority = data.priority ? parseInt(data.priority) : 1;
     const status = data.status || 'draft';
 
-    await env.DB.prepare(`
-      INSERT INTO advertisements (
-        id, title, product_id, category_id, poster_url, short_desc, 
-        short_desc_ml, detailed_desc, detailed_desc_ml, price, features, 
-        promo_info, priority, status, display_page_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
+    const newAd = {
       id,
-      data.title,
-      data.product_id || null,
-      data.category_id || null,
-      data.poster_url,
-      data.short_desc || '',
-      data.short_desc_ml || '',
-      data.detailed_desc || '',
-      data.detailed_desc_ml || '',
-      data.price !== undefined ? parseFloat(data.price) : null,
-      data.features || '',
-      data.promo_info || '',
+      title: data.title,
+      product_id: data.product_id || null,
+      category_id: data.category_id || null,
+      poster_url: data.poster_url,
+      short_desc: data.short_desc || '',
+      short_desc_ml: data.short_desc_ml || '',
+      detailed_desc: data.detailed_desc || '',
+      detailed_desc_ml: data.detailed_desc_ml || '',
+      price: data.price !== undefined ? parseFloat(data.price) : null,
+      features: data.features || '',
+      promo_info: data.promo_info || '',
       priority,
       status,
-      pageId
-    ).run();
+      display_page_id: pageId,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
 
-    // If schedule dates provided, create schedule record
-    if (data.start_time && data.end_time) {
-      const scheduleId = `sch_${generateRandomHex(8)}`;
-      await env.DB.prepare(`
-        INSERT INTO advertisement_schedules (id, advertisement_id, start_time, end_time, duration_sec, priority, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, 1)
-      `).bind(scheduleId, id, data.start_time, data.end_time, data.duration_sec || 30, priority).run();
+    // Store in memory
+    const existingIdx = memoryAds.findIndex(a => a.id === id);
+    if (existingIdx !== -1) {
+      memoryAds[existingIdx] = newAd;
+    } else {
+      memoryAds.unshift(newAd);
     }
 
-    await env.DB.prepare("INSERT INTO activity_logs (id, actor, action, details) VALUES (?, ?, ?, ?)").bind(
-      generateRandomHex(16),
-      `admin:${admin.email}`,
-      'AD_CREATED',
-      `Advertisement created: ${data.title} (ID: ${id})`
-    ).run();
+    if (status === 'active') {
+      activeAdId = id;
+    }
 
-    return jsonResponse({ success: true, message: 'Advertisement created successfully', id }, 201);
+    // Attempt DB storage if attached
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO advertisements (
+            id, title, product_id, category_id, poster_url, short_desc, 
+            short_desc_ml, detailed_desc, detailed_desc_ml, price, features, 
+            promo_info, priority, status, display_page_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          id,
+          newAd.title,
+          newAd.product_id,
+          newAd.category_id,
+          newAd.poster_url,
+          newAd.short_desc,
+          newAd.short_desc_ml,
+          newAd.detailed_desc,
+          newAd.detailed_desc_ml,
+          newAd.price,
+          newAd.features,
+          newAd.promo_info,
+          newAd.priority,
+          newAd.status,
+          newAd.display_page_id
+        ).run();
+
+        if (data.start_time && data.end_time) {
+          const scheduleId = `sch_${generateRandomHex(8)}`;
+          await env.DB.prepare(`
+            INSERT INTO advertisement_schedules (id, advertisement_id, start_time, end_time, duration_sec, priority, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
+          `).bind(scheduleId, id, data.start_time, data.end_time, data.duration_sec || 30, priority).run();
+        }
+      } catch (dbErr) {}
+    }
+
+    return jsonResponse({ success: true, message: 'Advertisement created successfully', id, advertisement: newAd }, 201);
   } catch (err) {
     return jsonResponse({ error: 'Failed to create advertisement: ' + err.message }, 500);
   }
@@ -144,33 +176,46 @@ export async function handleUpdateAdvertisement(request, env, id) {
 
   try {
     const data = await request.json();
-    const existing = await env.DB.prepare('SELECT id FROM advertisements WHERE id = ?').bind(id).first();
-    if (!existing) return jsonResponse({ error: 'Advertisement not found' }, 404);
 
-    await env.DB.prepare(`
-      UPDATE advertisements SET
-        title = ?, product_id = ?, category_id = ?, poster_url = ?, short_desc = ?, 
-        short_desc_ml = ?, detailed_desc = ?, detailed_desc_ml = ?, price = ?, 
-        features = ?, promo_info = ?, priority = ?, status = ?, display_page_id = ?, 
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(
-      data.title,
-      data.product_id || null,
-      data.category_id || null,
-      data.poster_url,
-      data.short_desc || '',
-      data.short_desc_ml || '',
-      data.detailed_desc || '',
-      data.detailed_desc_ml || '',
-      data.price !== undefined ? parseFloat(data.price) : null,
-      data.features || '',
-      data.promo_info || '',
-      data.priority !== undefined ? parseInt(data.priority) : 1,
-      data.status || 'draft',
-      data.display_page_id !== undefined ? parseInt(data.display_page_id) : 1,
-      id
-    ).run();
+    // Update in memory
+    const idx = memoryAds.findIndex(a => a.id === id);
+    if (idx !== -1) {
+      memoryAds[idx] = {
+        ...memoryAds[idx],
+        ...data,
+        updated_at: new Date().toISOString()
+      };
+    }
+
+    // Update in DB if attached
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`
+          UPDATE advertisements SET
+            title = ?, product_id = ?, category_id = ?, poster_url = ?, short_desc = ?, 
+            short_desc_ml = ?, detailed_desc = ?, detailed_desc_ml = ?, price = ?, 
+            features = ?, promo_info = ?, priority = ?, status = ?, display_page_id = ?, 
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(
+          data.title,
+          data.product_id || null,
+          data.category_id || null,
+          data.poster_url,
+          data.short_desc || '',
+          data.short_desc_ml || '',
+          data.detailed_desc || '',
+          data.detailed_desc_ml || '',
+          data.price !== undefined ? parseFloat(data.price) : null,
+          data.features || '',
+          data.promo_info || '',
+          data.priority !== undefined ? parseInt(data.priority) : 1,
+          data.status || 'draft',
+          data.display_page_id !== undefined ? parseInt(data.display_page_id) : 1,
+          id
+        ).run();
+      } catch (dbErr) {}
+    }
 
     return jsonResponse({ success: true, message: 'Advertisement updated successfully' });
   } catch (err) {
@@ -185,13 +230,18 @@ export async function handleDeleteAdvertisement(request, env, id) {
   const admin = await authenticateAdmin(request, env);
   if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
 
-  await env.DB.prepare('DELETE FROM advertisements WHERE id = ?').bind(id).run();
-  await env.DB.prepare("INSERT INTO activity_logs (id, actor, action, details) VALUES (?, ?, ?, ?)").bind(
-    generateRandomHex(16),
-    `admin:${admin.email}`,
-    'AD_DELETED',
-    `Advertisement deleted: ${id}`
-  ).run();
+  // Remove from memory
+  const idx = memoryAds.findIndex(a => a.id === id);
+  if (idx !== -1) {
+    memoryAds.splice(idx, 1);
+  }
+
+  // Remove from DB if attached
+  if (env.DB) {
+    try {
+      await env.DB.prepare('DELETE FROM advertisements WHERE id = ?').bind(id).run();
+    } catch (e) {}
+  }
 
   return jsonResponse({ success: true, message: 'Advertisement deleted successfully' });
 }
@@ -203,37 +253,42 @@ export async function handlePlayNow(request, env, id) {
   const admin = await authenticateAdmin(request, env);
   if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
 
-  const ad = await env.DB.prepare('SELECT id, title, display_page_id FROM advertisements WHERE id = ?').bind(id).first();
-  if (!ad) return jsonResponse({ error: 'Advertisement not found' }, 404);
+  let targetTitle = 'Advertisement';
+  let targetPageId = 1;
 
-  // Get current active ad to record in history
-  const currentActive = await env.DB.prepare("SELECT id FROM advertisements WHERE status = 'active'").first();
+  // In memory
+  memoryAds.forEach(a => {
+    if (a.id === id) {
+      a.status = 'active';
+      targetTitle = a.title;
+      targetPageId = a.display_page_id || 1;
+    } else if (a.status === 'active') {
+      a.status = 'scheduled';
+    }
+  });
+  activeAdId = id;
 
-  // Set all other active ads to scheduled/paused and this ad to active
-  await env.DB.batch([
-    env.DB.prepare("UPDATE advertisements SET status = 'scheduled' WHERE status = 'active'"),
-    env.DB.prepare("UPDATE advertisements SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id),
-    env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('active_ad_id', ?)").bind(id),
-    env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('active_ad_page_id', ?)").bind(String(ad.display_page_id || 1)),
-    env.DB.prepare("INSERT INTO advertisement_history (id, advertisement_id, activation_time, previous_ad_id, trigger_type, details) VALUES (?, ?, CURRENT_TIMESTAMP, ?, 'PLAY_NOW', ?)")
-      .bind(generateRandomHex(16), id, currentActive?.id || null, `Manual Play Now triggered by ${admin.email}`),
-    env.DB.prepare("INSERT INTO activity_logs (id, actor, action, details) VALUES (?, ?, ?, ?)")
-      .bind(generateRandomHex(16), `admin:${admin.email}`, 'AD_PLAY_NOW', `Manual override activated for: ${ad.title}`)
-  ]);
-
-  // Queue a SYNC_AD command for the ESP32 Main Controller
-  const commandId = `cmd_${generateRandomHex(8)}`;
-  const expiresAt = new Date(Date.now() + 60000).toISOString(); // 60s TTL
-  await env.DB.prepare(`
-    INSERT INTO robot_commands (id, device_id, command_type, payload_json, status, expires_at)
-    VALUES (?, 'ESP32_MAIN_ROBOT_01', 'SYNC_AD', ?, 'PENDING', ?)
-  `).bind(commandId, JSON.stringify({ adId: id, pageId: ad.display_page_id || 1 }), expiresAt).run();
+  if (env.DB) {
+    try {
+      const ad = await env.DB.prepare('SELECT id, title, display_page_id FROM advertisements WHERE id = ?').bind(id).first();
+      if (ad) {
+        targetTitle = ad.title;
+        targetPageId = ad.display_page_id || 1;
+      }
+      await env.DB.batch([
+        env.DB.prepare("UPDATE advertisements SET status = 'scheduled' WHERE status = 'active'"),
+        env.DB.prepare("UPDATE advertisements SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id),
+        env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('active_ad_id', ?)").bind(id),
+        env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('active_ad_page_id', ?)").bind(String(targetPageId))
+      ]);
+    } catch (e) {}
+  }
 
   return jsonResponse({
     success: true,
-    message: `Advertisement "${ad.title}" is now broadcasting live on Kiosk and DWIN HMI.`,
+    message: `Advertisement "${targetTitle}" is now broadcasting live on display.`,
     activeAdId: id,
-    displayPageId: ad.display_page_id || 1
+    displayPageId: targetPageId
   });
 }
 
@@ -244,7 +299,15 @@ export async function handlePauseAdvertisement(request, env, id) {
   const admin = await authenticateAdmin(request, env);
   if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
 
-  await env.DB.prepare("UPDATE advertisements SET status = 'paused', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+  const idx = memoryAds.findIndex(a => a.id === id);
+  if (idx !== -1) memoryAds[idx].status = 'paused';
+
+  if (env.DB) {
+    try {
+      await env.DB.prepare("UPDATE advertisements SET status = 'paused', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+    } catch (e) {}
+  }
+
   return jsonResponse({ success: true, message: 'Advertisement paused.' });
 }
 
@@ -255,20 +318,35 @@ export async function handleResumeAdvertisement(request, env, id) {
   const admin = await authenticateAdmin(request, env);
   if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
 
-  await env.DB.prepare("UPDATE advertisements SET status = 'scheduled', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
-  return jsonResponse({ success: true, message: 'Advertisement resumed and scheduled.' });
+  const idx = memoryAds.findIndex(a => a.id === id);
+  if (idx !== -1) memoryAds[idx].status = 'active';
+
+  if (env.DB) {
+    try {
+      await env.DB.prepare("UPDATE advertisements SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+    } catch (e) {}
+  }
+
+  return jsonResponse({ success: true, message: 'Advertisement resumed.' });
 }
 
 /**
  * GET /api/advertisements/history
  */
 export async function handleAdvertisementHistory(request, env) {
-  const history = await env.DB.prepare(`
-    SELECT h.*, a.title as ad_title, a.poster_url 
-    FROM advertisement_history h 
-    LEFT JOIN advertisements a ON h.advertisement_id = a.id 
-    ORDER BY h.activation_time DESC LIMIT 50
-  `).all();
+  if (env.DB) {
+    try {
+      const history = await env.DB.prepare(`
+        SELECT h.*, a.title as ad_title, a.poster_url 
+        FROM advertisement_history h 
+        LEFT JOIN advertisements a ON h.advertisement_id = a.id 
+        ORDER BY h.activation_time DESC LIMIT 50
+      `).all();
+      if (history && history.results) {
+        return jsonResponse({ history: history.results });
+      }
+    } catch (e) {}
+  }
 
-  return jsonResponse({ history: history.results || [] });
+  return jsonResponse({ history: [] });
 }

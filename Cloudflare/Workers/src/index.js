@@ -41,12 +41,12 @@ export default {
       if (path === '/kiosk.html' || path === '/kiosk') {
         return Response.redirect(`${url.origin}/admin.html`, 302);
       }
-      if (env.ASSETS) {
-        return await env.ASSETS.fetch(request);
-      }
       const staticResponse = serveStaticAsset(path);
       if (staticResponse) {
         return staticResponse;
+      }
+      if (env.ASSETS) {
+        return await env.ASSETS.fetch(request);
       }
       if (path === '/status' || path === '/health') {
         return jsonResponse({

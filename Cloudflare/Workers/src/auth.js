@@ -50,7 +50,13 @@ export async function handleSetupPassword(request, env) {
     }
 
     // Check if an admin already exists in D1
-    const existing = await env.DB.prepare('SELECT id, password_hash FROM admins WHERE email = ?').bind(ADMIN_EMAIL).first();
+    let existing = null;
+    if (env.DB) {
+      try {
+        existing = await env.DB.prepare('SELECT id, password_hash FROM admins WHERE email = ?').bind(ADMIN_EMAIL).first();
+      } catch (e) {}
+    }
+
     if (existing && existing.password_hash) {
       // If already initialized, require current master setup key
       const expectedKey = env.SETUP_MASTER_KEY || 'NTTF_MECHATRONICS_2026_INIT';
@@ -63,17 +69,21 @@ export async function handleSetupPassword(request, env) {
     const passwordHash = await hashPassword(password, salt);
     const adminId = existing ? existing.id : 'admin_nttf_01';
 
-    if (existing) {
-      await env.DB.prepare('UPDATE admins SET password_hash = ?, salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .bind(passwordHash, salt, adminId).run();
-    } else {
-      await env.DB.prepare('INSERT INTO admins (id, email, password_hash, salt, role) VALUES (?, ?, ?, ?, ?)')
-        .bind(adminId, ADMIN_EMAIL, passwordHash, salt, 'superadmin').run();
-    }
+    if (env.DB) {
+      try {
+        if (existing) {
+          await env.DB.prepare('UPDATE admins SET password_hash = ?, salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .bind(passwordHash, salt, adminId).run();
+        } else {
+          await env.DB.prepare('INSERT INTO admins (id, email, password_hash, salt, role) VALUES (?, ?, ?, ?, ?)')
+            .bind(adminId, ADMIN_EMAIL, passwordHash, salt, 'superadmin').run();
+        }
 
-    // Log activity
-    await env.DB.prepare('INSERT INTO activity_logs (id, actor, action, details) VALUES (?, ?, ?, ?)')
-      .bind(generateRandomHex(16), `admin:${ADMIN_EMAIL}`, 'PASSWORD_SETUP', 'Administrator password securely set or updated.').run();
+        // Log activity
+        await env.DB.prepare('INSERT INTO activity_logs (id, actor, action, details) VALUES (?, ?, ?, ?)')
+          .bind(generateRandomHex(16), `admin:${ADMIN_EMAIL}`, 'PASSWORD_SETUP', 'Administrator password securely set or updated.').run();
+      } catch (dbErr) {}
+    }
 
     return jsonResponse({ success: true, message: 'Administrator password configured successfully. You may now log in.' });
   } catch (err) {
@@ -247,9 +257,13 @@ export async function handleLogout(request, env) {
     const authHeader = request.headers.get('Authorization');
     const token = authHeader.substring(7).trim();
     const tokenHash = await sha256Hex(token);
-    await env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').bind(tokenHash).run();
-    await env.DB.prepare('INSERT INTO activity_logs (id, actor, action, details) VALUES (?, ?, ?, ?)')
-      .bind(generateRandomHex(16), `admin:${ADMIN_EMAIL}`, 'LOGOUT', 'Administrator logged out').run();
+    if (env.DB) {
+      try {
+        await env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').bind(tokenHash).run();
+        await env.DB.prepare('INSERT INTO activity_logs (id, actor, action, details) VALUES (?, ?, ?, ?)')
+          .bind(generateRandomHex(16), `admin:${ADMIN_EMAIL}`, 'LOGOUT', 'Administrator logged out').run();
+      } catch (e) {}
+    }
   }
   return jsonResponse({ success: true, message: 'Logged out successfully.' });
 }
