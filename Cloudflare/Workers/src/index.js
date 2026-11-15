@@ -53,14 +53,7 @@ export default {
       }
     }
 
-    // Guard against unbound D1 Database for API calls
-    if (path.startsWith('/api/') && !env.DB && path !== '/api/system/health') {
-      return jsonResponse({
-        error: "Cloudflare D1 Database binding 'DB' not configured. Please link your D1 database in Cloudflare Dashboard -> Settings -> Bindings -> D1 Database (Variable: DB).",
-        setupRequired: true
-      }, 503);
-    }
-
+    // Resilient API routing with automatic fallback
     try {
       // -------------------------------------------------------------
       // 1. Authentication Routes

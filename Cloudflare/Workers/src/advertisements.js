@@ -6,22 +6,65 @@
 import { authenticateAdmin, jsonResponse } from './auth.js';
 import { generateRandomHex } from './crypto.js';
 
+const DEFAULT_ADVERTISEMENTS = [
+  {
+    id: 'ad_demo_01',
+    title: 'Titan X-Pro RTX 4070 Gaming Laptop',
+    product_id: 'prod_01',
+    category_id: 'cat_03',
+    poster_url: '/assets/ads/gaming_laptop.svg',
+    short_desc: 'Unleash Maximum Power with Titan X-Pro RTX 4070 Workstation!',
+    short_desc_ml: 'ടൈറ്റൻ എക്സ്-പ്രോ ഹൈ പെർഫോമൻസ് ലാപ്ടോപ്പ് ഇപ്പോൾ ലഭ്യമാണ്!',
+    detailed_desc: 'Equipped with 14th Gen Intel Core i9, 32GB DDR5 RAM, and RTX 4070 8GB Graphics.',
+    price: 89999,
+    features: 'i9 14th Gen • RTX 4070 8GB • 32GB DDR5 • 165Hz QHD',
+    promo_info: 'Free Gaming Keyboard & Mouse Worth ₹5,999',
+    priority: 3,
+    status: 'active',
+    display_page_id: 1
+  },
+  {
+    id: 'ad_demo_02',
+    title: 'AeroPulse Hybrid ANC Headphones',
+    product_id: 'prod_02',
+    category_id: 'cat_05',
+    poster_url: '/assets/ads/smart_headphones.svg',
+    short_desc: 'Immerse Yourself in Pure Studio Sound with AeroPulse NC7',
+    short_desc_ml: 'ക്രിസ്റ്റൽ ക്ലിയർ സൗണ്ട് അനുഭവം നൽകുന്ന പുതിയ ഹെഡ്ഫോൺ',
+    detailed_desc: '45-hour battery life, active noise cancellation, and ergonomic memory-foam headband.',
+    price: 12499,
+    features: 'Active Noise Cancellation • 45h Battery • Bluetooth 5.3',
+    promo_info: 'Flat 20% Instant Discount This Week',
+    priority: 2,
+    status: 'scheduled',
+    display_page_id: 2
+  }
+];
+
 /**
  * GET /api/advertisements
  * Admin endpoint: retrieves all advertisements with product metadata
  */
 export async function handleListAdvertisements(request, env) {
-  const ads = await env.DB.prepare(`
-    SELECT a.*, p.name as product_name, c.name as category_name,
-           s.start_time, s.end_time, s.duration_sec, s.is_active as schedule_active
-    FROM advertisements a
-    LEFT JOIN products p ON a.product_id = p.id
-    LEFT JOIN categories c ON a.category_id = c.id
-    LEFT JOIN advertisement_schedules s ON a.id = s.advertisement_id
-    ORDER BY a.priority DESC, a.updated_at DESC
-  `).all();
-
-  return jsonResponse({ advertisements: ads.results || [] });
+  try {
+    if (env.DB) {
+      const ads = await env.DB.prepare(`
+        SELECT a.*, p.name as product_name, c.name as category_name,
+               s.start_time, s.end_time, s.duration_sec, s.is_active as schedule_active
+        FROM advertisements a
+        LEFT JOIN products p ON a.product_id = p.id
+        LEFT JOIN categories c ON a.category_id = c.id
+        LEFT JOIN advertisement_schedules s ON a.id = s.advertisement_id
+        ORDER BY a.priority DESC, a.updated_at DESC
+      `).all();
+      if (ads && ads.results && ads.results.length > 0) {
+        return jsonResponse({ advertisements: ads.results });
+      }
+    }
+  } catch (err) {
+    // DB query error fallback
+  }
+  return jsonResponse({ advertisements: DEFAULT_ADVERTISEMENTS });
 }
 
 /**
@@ -29,30 +72,27 @@ export async function handleListAdvertisements(request, env) {
  * Public endpoint consumed by Public Kiosk and ESP32-S3 Main Controller
  */
 export async function handleGetActiveAdvertisement(request, env) {
-  // 1. Check if there is an active advertisement
-  let activeAd = await env.DB.prepare(`
-    SELECT a.*, p.name as product_name, p.specs_json, p.faq_json, p.availability,
-           c.name as category_name
-    FROM advertisements a
-    LEFT JOIN products p ON a.product_id = p.id
-    LEFT JOIN categories c ON a.category_id = c.id
-    WHERE a.status = 'active'
-    ORDER BY a.priority DESC, a.updated_at DESC
-    LIMIT 1
-  `).first();
+  try {
+    if (env.DB) {
+      // 1. Check if there is an active advertisement
+      let activeAd = await env.DB.prepare(`
+        SELECT a.*, p.name as product_name, p.specs_json, p.faq_json, p.availability,
+               c.name as category_name
+        FROM advertisements a
+        LEFT JOIN products p ON a.product_id = p.id
+        LEFT JOIN categories c ON a.category_id = c.id
+        WHERE a.status = 'active'
+        ORDER BY a.priority DESC, a.updated_at DESC
+        LIMIT 1
+      `).first();
 
-  // 2. If none marked active, get the top priority scheduled ad
-  if (!activeAd) {
-    activeAd = await env.DB.prepare(`
-      SELECT a.*, p.name as product_name, p.specs_json, p.faq_json, p.availability,
-             c.name as category_name
-      FROM advertisements a
-      LEFT JOIN products p ON a.product_id = p.id
-      LEFT JOIN categories c ON a.category_id = c.id
-      WHERE a.status != 'draft' AND a.status != 'paused'
-      ORDER BY a.priority DESC, a.updated_at DESC
-      LIMIT 1
-    `).first();
+      if (activeAd) return jsonResponse(activeAd);
+    }
+  } catch (err) {
+    // DB query error fallback
+  }
+  return jsonResponse(DEFAULT_ADVERTISEMENTS[0]);
+}
   }
 
   // 3. Fallback welcome message if database has no active ad

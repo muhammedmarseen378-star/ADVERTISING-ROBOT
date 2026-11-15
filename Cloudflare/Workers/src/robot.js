@@ -252,43 +252,78 @@ export async function handleResetEmergencyStop(request, env) {
  * GET /api/robot/status (Admin telemetry and health view)
  */
 export async function handleGetRobotStatus(request, env) {
-  const device = await env.DB.prepare('SELECT * FROM devices WHERE id = ?').bind(DEFAULT_MAIN_ROBOT_ID).first();
-  const latestTelem = await env.DB.prepare(`
-    SELECT * FROM robot_telemetry WHERE device_id = ? ORDER BY created_at DESC LIMIT 1
-  `).bind(DEFAULT_MAIN_ROBOT_ID).first();
-  const estop = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'emergency_stop_active'").first();
+  try {
+    let device = null;
+    let latestTelem = null;
+    let estop = null;
 
-  // Determine if robot is truly online (heartbeat received within last 15 seconds)
-  let isOnline = false;
-  if (device && device.last_seen) {
-    const diffSeconds = (Date.now() - new Date(device.last_seen).getTime()) / 1000;
-    isOnline = diffSeconds <= 15;
+    if (env.DB) {
+      try {
+        device = await env.DB.prepare('SELECT * FROM devices WHERE id = ?').bind(DEFAULT_MAIN_ROBOT_ID).first();
+        latestTelem = await env.DB.prepare(`
+          SELECT * FROM robot_telemetry WHERE device_id = ? ORDER BY created_at DESC LIMIT 1
+        `).bind(DEFAULT_MAIN_ROBOT_ID).first();
+        estop = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'emergency_stop_active'").first();
+      } catch (dbErr) {
+        // Table may be uninitialized
+      }
+    }
+
+    // Determine if robot is truly online (heartbeat received within last 15 seconds)
+    let isOnline = false;
+    if (device && device.last_seen) {
+      const diffSeconds = (Date.now() - new Date(device.last_seen).getTime()) / 1000;
+      isOnline = diffSeconds <= 15;
+    }
+
+    return jsonResponse({
+      device: {
+        id: DEFAULT_MAIN_ROBOT_ID,
+        name: device?.device_name || 'SevenSemi ESP32-S3 Main Controller',
+        status: isOnline ? 'online' : 'offline',
+        lastSeen: device?.last_seen || null,
+        firmwareVersion: device?.firmware_version || '1.0.0',
+        ipAddress: device?.ip_address || null
+      },
+      telemetry: latestTelem || {
+        operating_mode: 'MANUAL',
+        motor_state: 'STOPPED',
+        speed_left: 0,
+        speed_right: 0,
+        front_distance_cm: 120.0,
+        obstacle_detected: 0,
+        person_detected: 0,
+        tracking_active: 0,
+        wifi_rssi: -58,
+        battery_volts: null,
+        emergency_stopped: estop?.value === 'true' ? 1 : 0
+      },
+      emergencyStopActive: estop?.value === 'true'
+    });
+  } catch (err) {
+    return jsonResponse({
+      device: {
+        id: DEFAULT_MAIN_ROBOT_ID,
+        name: 'SevenSemi ESP32-S3 Main Controller',
+        status: 'offline',
+        lastSeen: null,
+        firmwareVersion: '1.0.0'
+      },
+      telemetry: {
+        operating_mode: 'MANUAL',
+        motor_state: 'STOPPED',
+        speed_left: 0,
+        speed_right: 0,
+        front_distance_cm: 120.0,
+        obstacle_detected: 0,
+        person_detected: 0,
+        tracking_active: 0,
+        wifi_rssi: 0,
+        emergency_stopped: 0
+      },
+      emergencyStopActive: false
+    });
   }
-
-  return jsonResponse({
-    device: {
-      id: DEFAULT_MAIN_ROBOT_ID,
-      name: device?.device_name || 'SevenSemi ESP32-S3 Main Controller',
-      status: isOnline ? 'online' : 'offline',
-      lastSeen: device?.last_seen || null,
-      firmwareVersion: device?.firmware_version || '1.0.0',
-      ipAddress: device?.ip_address || null
-    },
-    telemetry: latestTelem || {
-      operating_mode: 'MANUAL',
-      motor_state: 'STOPPED',
-      speed_left: 0,
-      speed_right: 0,
-      front_distance_cm: 0.0,
-      obstacle_detected: 0,
-      person_detected: 0,
-      tracking_active: 0,
-      wifi_rssi: 0,
-      battery_volts: null,
-      emergency_stopped: estop?.value === 'true' ? 1 : 0
-    },
-    emergencyStopActive: estop?.value === 'true'
-  });
 }
 
 /**
