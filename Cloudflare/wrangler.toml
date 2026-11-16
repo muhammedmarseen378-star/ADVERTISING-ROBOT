@@ -12,7 +12,7 @@ ADMIN_EMAIL = "nttf.ttc.m3b.group1.project@gmail.com"
 [[d1_databases]]
 binding = "DB"
 database_name = "ai_ad_robot_db"
-database_id = "ai_ad_robot_db"
+database_id = "d0ba0b82-9bfc-4c38-a4dd-32f29bcc323a"
 
 [triggers]
 crons = ["* * * * *"]

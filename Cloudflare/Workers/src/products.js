@@ -262,18 +262,19 @@ export async function handleCreateProduct(request, env) {
 
   try {
     const data = await request.json();
-    if (!data.name || !data.category_id) {
-      return jsonResponse({ error: 'Product name and category are required.' }, 400);
+    if (!data.name) {
+      return jsonResponse({ error: 'Product name is required.' }, 400);
     }
 
+    const categoryId = data.category_id || 'cat_21';
     const id = data.id || `prod_${generateRandomHex(8)}`;
-    const cat = memoryCategories.find(c => c.id === data.category_id);
-    const categoryName = data.category_name || (cat ? cat.name : 'General');
+    const cat = memoryCategories.find(c => c.id === categoryId);
+    const categoryName = data.category_name || (cat ? cat.name : 'Other / Custom');
 
     const newProduct = {
       id,
       name: data.name,
-      category_id: data.category_id,
+      category_id: categoryId,
       category_name: categoryName,
       brand: data.brand || '',
       model: data.model || '',
