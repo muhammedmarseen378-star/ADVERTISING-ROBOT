@@ -149,9 +149,10 @@ export async function handleListProducts(request, env) {
   const search = (url.searchParams.get('search') || '').toLowerCase().trim();
   const categoryId = url.searchParams.get('category') || '';
 
-  if (env.DB) {
+  // 1. Primary: Cloudflare D1 SQL Database
+  if (env && env.DB) {
     try {
-      const limit = parseInt(url.searchParams.get('limit') || '50');
+      const limit = parseInt(url.searchParams.get('limit') || '100');
       const offset = parseInt(url.searchParams.get('offset') || '0');
 
       let query = `
@@ -178,13 +179,35 @@ export async function handleListProducts(request, env) {
 
       const stmt = env.DB.prepare(query);
       const result = await stmt.bind(...params).all();
-      if (result && result.results && result.results.length > 0) {
+      if (result && Array.isArray(result.results)) {
         return jsonResponse({ products: result.results });
       }
-    } catch (err) {}
+    } catch (err) {
+      console.warn('[D1 List Notice]:', err.message);
+    }
   }
 
-  // Filter in-memory products
+  // 2. Secondary: Central Cloud Store Fallback (if D1 is unprovisioned)
+  try {
+    const cloudRes = await fetch('https://ai-advertising-robot-8.onrender.com/api/products', {
+      headers: { 'Accept': 'application/json' }
+    });
+    if (cloudRes.ok) {
+      const d = await cloudRes.json();
+      if (d && Array.isArray(d.products)) {
+        let prods = d.products;
+        if (search) {
+          prods = prods.filter(p => (p.name && p.name.toLowerCase().includes(search)) || (p.brand && p.brand.toLowerCase().includes(search)));
+        }
+        if (categoryId) {
+          prods = prods.filter(p => p.category_id === categoryId);
+        }
+        return jsonResponse({ products: prods });
+      }
+    }
+  } catch (cloudErr) {}
+
+  // 3. Fallback: Active isolate memory
   let filtered = [...memoryProducts];
   if (search) {
     filtered = filtered.filter(p => 
@@ -204,7 +227,7 @@ export async function handleListProducts(request, env) {
  * GET /api/products/:id
  */
 export async function handleGetProduct(request, env, id) {
-  if (env.DB) {
+  if (env && env.DB) {
     try {
       const product = await env.DB.prepare(`
         SELECT p.*, c.name as category_name 
@@ -215,6 +238,14 @@ export async function handleGetProduct(request, env, id) {
       if (product) return jsonResponse({ product });
     } catch (e) {}
   }
+
+  try {
+    const cloudRes = await fetch(`https://ai-advertising-robot-8.onrender.com/api/products/${id}`);
+    if (cloudRes.ok) {
+      const d = await cloudRes.json();
+      if (d && d.product) return jsonResponse({ product: d.product });
+    }
+  } catch (e) {}
 
   const memProd = memoryProducts.find(p => p.id === id);
   if (memProd) return jsonResponse({ product: memProd });
@@ -258,11 +289,11 @@ export async function handleCreateProduct(request, env) {
       image_url: data.image_url || null,
       notes: data.notes || '',
       is_verified: data.is_verified ? 1 : 0,
-      created_at: new Date().toISOString(),
+      created_at: data.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
-    // Store in memory
+    // 1. Store in active isolate memory
     const existingIdx = memoryProducts.findIndex(p => p.id === id);
     if (existingIdx !== -1) {
       memoryProducts[existingIdx] = newProduct;
@@ -270,15 +301,33 @@ export async function handleCreateProduct(request, env) {
       memoryProducts.unshift(newProduct);
     }
 
-    // Attempt DB storage if attached
-    if (env.DB) {
+    // 2. Primary: Persist to Cloudflare D1 SQL Database with atomic ON CONFLICT UPSERT
+    if (env && env.DB) {
       try {
         await env.DB.prepare(`
           INSERT INTO products (
             id, name, category_id, brand, model, price, currency, description, 
             description_ml, features_json, specs_json, promo_info, availability, 
-            faq_json, image_url, notes, is_verified
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            faq_json, image_url, notes, is_verified, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            category_id = excluded.category_id,
+            brand = excluded.brand,
+            model = excluded.model,
+            price = excluded.price,
+            currency = excluded.currency,
+            description = excluded.description,
+            description_ml = excluded.description_ml,
+            features_json = excluded.features_json,
+            specs_json = excluded.specs_json,
+            promo_info = excluded.promo_info,
+            availability = excluded.availability,
+            faq_json = excluded.faq_json,
+            image_url = excluded.image_url,
+            notes = excluded.notes,
+            is_verified = excluded.is_verified,
+            updated_at = CURRENT_TIMESTAMP
         `).bind(
           id,
           newProduct.name,
@@ -298,8 +347,19 @@ export async function handleCreateProduct(request, env) {
           newProduct.notes,
           newProduct.is_verified
         ).run();
-      } catch (dbErr) {}
+      } catch (dbErr) {
+        console.warn('[D1 Upsert Notice]:', dbErr.message);
+      }
     }
+
+    // 3. Central Cloud Store Sync: Replicate so data is permanent across all regions
+    try {
+      await fetch('https://ai-advertising-robot-8.onrender.com/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProduct)
+      });
+    } catch (syncErr) {}
 
     return jsonResponse({ success: true, message: 'Product created successfully', id, product: newProduct }, 201);
   } catch (err) {
@@ -317,7 +377,7 @@ export async function handleUpdateProduct(request, env, id) {
   try {
     const data = await request.json();
 
-    // Update in memory
+    // 1. Update in active isolate memory
     const idx = memoryProducts.findIndex(p => p.id === id);
     if (idx !== -1) {
       memoryProducts[idx] = {
@@ -327,8 +387,8 @@ export async function handleUpdateProduct(request, env, id) {
       };
     }
 
-    // Update in DB if attached
-    if (env.DB) {
+    // 2. Update in Cloudflare D1 SQL Database
+    if (env && env.DB) {
       try {
         const featuresJson = typeof data.features === 'object' ? JSON.stringify(data.features) : (data.features_json || '[]');
         const specsJson = typeof data.specs === 'object' ? JSON.stringify(data.specs) : (data.specs_json || '{}');
@@ -360,8 +420,19 @@ export async function handleUpdateProduct(request, env, id) {
           data.is_verified ? 1 : 0,
           id
         ).run();
-      } catch (dbErr) {}
+      } catch (dbErr) {
+        console.warn('[D1 Update Notice]:', dbErr.message);
+      }
     }
+
+    // 3. Central Cloud Store Sync
+    try {
+      await fetch(`https://ai-advertising-robot-8.onrender.com/api/products/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (syncErr) {}
 
     return jsonResponse({ success: true, message: 'Product updated successfully' });
   } catch (err) {
@@ -376,18 +447,25 @@ export async function handleDeleteProduct(request, env, id) {
   const admin = await authenticateAdmin(request, env);
   if (!admin) return jsonResponse({ error: 'Unauthorized' }, 401);
 
-  // Remove from in-memory
+  // 1. Remove from in-memory
   const idx = memoryProducts.findIndex(p => p.id === id);
   if (idx !== -1) {
     memoryProducts.splice(idx, 1);
   }
 
-  // Remove from DB if attached
-  if (env.DB) {
+  // 2. Remove from Cloudflare D1 SQL Database
+  if (env && env.DB) {
     try {
       await env.DB.prepare('DELETE FROM products WHERE id = ?').bind(id).run();
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[D1 Delete Notice]:', e.message);
+    }
   }
+
+  // 3. Remove from Central Cloud Store
+  try {
+    await fetch(`https://ai-advertising-robot-8.onrender.com/api/products/${id}`, { method: 'DELETE' });
+  } catch (syncErr) {}
 
   return jsonResponse({ success: true, message: 'Product deleted successfully' });
 }

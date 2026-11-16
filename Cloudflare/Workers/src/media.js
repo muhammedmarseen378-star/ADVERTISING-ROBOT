@@ -46,12 +46,33 @@ export async function handleMediaUpload(request, env) {
 
     const objectKey = `posters/${Date.now()}_${generateRandomHex(8)}.${ext}`;
 
-    // Upload to Cloudflare R2 bucket
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunk = 8192;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    const base64Data = btoa(binary);
+
+    // Upload to Cloudflare R2 bucket if attached
     if (env.MEDIA_BUCKET) {
-      const buffer = await file.arrayBuffer();
-      await env.MEDIA_BUCKET.put(objectKey, buffer, {
-        httpMetadata: { contentType: file.type }
-      });
+      try {
+        await env.MEDIA_BUCKET.put(objectKey, buffer, {
+          httpMetadata: { contentType: file.type }
+        });
+      } catch (r2Err) {}
+    }
+
+    // Persist to Cloudflare D1 media_files so images are permanent across all devices
+    if (env.DB) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO media_files (id, mime_type, data_base64, file_size)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET data_base64 = excluded.data_base64
+        `).bind(objectKey, file.type, base64Data, file.size).run();
+      } catch (dbErr) {}
     }
 
     const publicUrl = `/api/media/download/${objectKey}`;
@@ -70,23 +91,46 @@ export async function handleMediaUpload(request, env) {
 
 /**
  * GET /api/media/download/*
- * Serves uploaded asset directly from Cloudflare R2 bucket with proper caching
+ * Serves uploaded asset directly from Cloudflare R2 bucket or D1 database with proper caching
  */
 export async function handleMediaDownload(request, env, objectKey) {
-  if (!env.MEDIA_BUCKET) {
-    return new Response('R2 Storage Bucket not bound.', { status: 500 });
+  // 1. Try Cloudflare R2 bucket
+  if (env.MEDIA_BUCKET) {
+    try {
+      const object = await env.MEDIA_BUCKET.get(objectKey);
+      if (object) {
+        const headers = new Headers();
+        object.writeHttpMetadata(headers);
+        headers.set('etag', object.httpEtag);
+        headers.set('Cache-Control', 'public, max-age=86400');
+        headers.set('Access-Control-Allow-Origin', '*');
+        return new Response(object.body, { headers });
+      }
+    } catch (e) {}
   }
 
-  const object = await env.MEDIA_BUCKET.get(objectKey);
-  if (!object) {
-    return new Response('Media file not found', { status: 404 });
+  // 2. Try Cloudflare D1 Database media_files table
+  if (env.DB) {
+    try {
+      const row = await env.DB.prepare('SELECT mime_type, data_base64 FROM media_files WHERE id = ?').bind(objectKey).first();
+      if (row && row.data_base64) {
+        const binaryString = atob(row.data_base64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        return new Response(bytes.buffer, {
+          status: 200,
+          headers: {
+            'Content-Type': row.mime_type || 'image/jpeg',
+            'Cache-Control': 'public, max-age=86400',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
+    } catch (e) {}
   }
 
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set('etag', object.httpEtag);
-  headers.set('Cache-Control', 'public, max-age=86400');
-  headers.set('Access-Control-Allow-Origin', '*');
-
-  return new Response(object.body, { headers });
+  return new Response('Media file not found', { status: 404 });
 }

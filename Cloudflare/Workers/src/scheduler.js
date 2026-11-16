@@ -146,15 +146,31 @@ export async function handleListSchedules(request, env) {
       const schedules = await env.DB.prepare(`
         SELECT s.*, a.title as ad_title, a.poster_url, a.display_page_id
         FROM advertisement_schedules s
-        JOIN advertisements a ON s.advertisement_id = a.id
+        LEFT JOIN advertisements a ON s.advertisement_id = a.id
         ORDER BY s.priority DESC, s.start_time ASC
       `).all();
 
-      if (schedules && schedules.results && schedules.results.length > 0) {
+      if (schedules && Array.isArray(schedules.results)) {
         return jsonResponse({ schedules: schedules.results });
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[D1 Schedule List Notice]:', e.message);
+    }
   }
+
+  // 2. Secondary: Central Cloud Store Fallback (if D1 is unprovisioned)
+  try {
+    const cloudRes = await fetch('https://ai-advertising-robot-8.onrender.com/api/schedules', {
+      headers: { 'Accept': 'application/json' }
+    });
+    if (cloudRes.ok) {
+      const d = await cloudRes.json();
+      if (d && Array.isArray(d.schedules)) {
+        return jsonResponse({ schedules: d.schedules });
+      }
+    }
+  } catch (cloudErr) {}
+
   return jsonResponse({ schedules: memorySchedules });
 }
 
@@ -178,19 +194,52 @@ export async function handleCreateSchedule(request, env) {
       days: data.days || 'Every Day',
       priority: parseInt(data.priority || 2),
       is_active: data.is_active !== undefined ? (data.is_active ? 1 : 0) : 1,
-      created_at: new Date().toISOString()
+      created_at: data.created_at || new Date().toISOString()
     };
 
-    memorySchedules.push(newSchedule);
+    // 1. Isolate memory
+    const existingIdx = memorySchedules.findIndex(s => s.id === newSchedule.id);
+    if (existingIdx !== -1) {
+      memorySchedules[existingIdx] = newSchedule;
+    } else {
+      memorySchedules.push(newSchedule);
+    }
 
-    if (env.DB) {
+    // 2. Primary: Cloudflare D1 with ON CONFLICT
+    if (env && env.DB) {
       try {
         await env.DB.prepare(`
           INSERT INTO advertisement_schedules (id, advertisement_id, start_time, end_time, duration_sec, priority, is_active)
           VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(newSchedule.id, newSchedule.advertisement_id, newSchedule.start_time, newSchedule.end_time, newSchedule.duration_sec, newSchedule.priority, newSchedule.is_active).run();
-      } catch (e) {}
+          ON CONFLICT(id) DO UPDATE SET
+            advertisement_id = excluded.advertisement_id,
+            start_time = excluded.start_time,
+            end_time = excluded.end_time,
+            duration_sec = excluded.duration_sec,
+            priority = excluded.priority,
+            is_active = excluded.is_active
+        `).bind(
+          newSchedule.id,
+          newSchedule.advertisement_id,
+          newSchedule.start_time,
+          newSchedule.end_time,
+          newSchedule.duration_sec,
+          newSchedule.priority,
+          newSchedule.is_active
+        ).run();
+      } catch (e) {
+        console.warn('[D1 Schedule Upsert Notice]:', e.message);
+      }
     }
+
+    // 3. Central Cloud Store Sync
+    try {
+      await fetch('https://ai-advertising-robot-8.onrender.com/api/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSchedule)
+      });
+    } catch (e) {}
 
     return jsonResponse({ success: true, schedule: newSchedule }, 201);
   } catch (err) {
@@ -212,7 +261,7 @@ export async function handleUpdateSchedule(request, env, id) {
       memorySchedules[idx] = { ...memorySchedules[idx], ...data, updated_at: new Date().toISOString() };
     }
 
-    if (env.DB) {
+    if (env && env.DB) {
       try {
         await env.DB.prepare(`
           UPDATE advertisement_schedules 
@@ -221,6 +270,15 @@ export async function handleUpdateSchedule(request, env, id) {
         `).bind(data.start_time, data.end_time, data.duration_sec, data.priority, data.is_active ? 1 : 0, id).run();
       } catch (e) {}
     }
+
+    // Central Cloud Store Sync
+    try {
+      await fetch(`https://ai-advertising-robot-8.onrender.com/api/schedules/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (e) {}
 
     return jsonResponse({ success: true, schedule: memorySchedules[idx] || data });
   } catch (err) {
@@ -241,11 +299,18 @@ export async function handleDeleteSchedule(request, env, id) {
       memorySchedules.splice(idx, 1);
     }
 
-    if (env.DB) {
+    if (env && env.DB) {
       try {
         await env.DB.prepare('DELETE FROM advertisement_schedules WHERE id = ?').bind(id).run();
       } catch (e) {}
     }
+
+    // Central Cloud Store Sync
+    try {
+      await fetch(`https://ai-advertising-robot-8.onrender.com/api/schedules/${id}`, {
+        method: 'DELETE'
+      });
+    } catch (e) {}
 
     return jsonResponse({ success: true, message: 'Schedule deleted successfully.' });
   } catch (err) {
@@ -268,11 +333,18 @@ export async function handleToggleSchedule(request, env, id) {
       activeVal = memorySchedules[idx].is_active;
     }
 
-    if (env.DB) {
+    if (env && env.DB) {
       try {
         await env.DB.prepare('UPDATE advertisement_schedules SET is_active = ? WHERE id = ?').bind(activeVal, id).run();
       } catch (e) {}
     }
+
+    // Central Cloud Store Sync
+    try {
+      await fetch(`https://ai-advertising-robot-8.onrender.com/api/schedules/${id}/toggle`, {
+        method: 'POST'
+      });
+    } catch (e) {}
 
     return jsonResponse({ success: true, schedule: memorySchedules[idx] });
   } catch (err) {

@@ -140,6 +140,15 @@ export async function ensureDatabase(env) {
           expires_at TIMESTAMP NOT NULL,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+      `),
+      env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS media_files (
+          id TEXT PRIMARY KEY,
+          mime_type TEXT NOT NULL,
+          data_base64 TEXT NOT NULL,
+          file_size INTEGER,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
       `)
     ]);
 

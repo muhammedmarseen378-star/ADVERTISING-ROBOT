@@ -14,8 +14,8 @@ export let activeAdId = null;
  * Admin endpoint: retrieves all advertisements with product metadata
  */
 export async function handleListAdvertisements(request, env) {
-  try {
-    if (env.DB) {
+  if (env && env.DB) {
+    try {
       const ads = await env.DB.prepare(`
         SELECT a.*, p.name as product_name, c.name as category_name,
                s.start_time, s.end_time, s.duration_sec, s.is_active as schedule_active
@@ -25,11 +25,22 @@ export async function handleListAdvertisements(request, env) {
         LEFT JOIN advertisement_schedules s ON a.id = s.advertisement_id
         ORDER BY a.priority DESC, a.updated_at DESC
       `).all();
-      if (ads && ads.results && ads.results.length > 0) {
+      if (ads && Array.isArray(ads.results)) {
         return jsonResponse({ advertisements: ads.results });
       }
+    } catch (err) {}
+  }
+
+  // Central Cloud Store Fallback
+  try {
+    const cloudRes = await fetch('https://ai-advertising-robot-8.onrender.com/api/advertisements');
+    if (cloudRes.ok) {
+      const d = await cloudRes.json();
+      if (d && Array.isArray(d.advertisements)) {
+        return jsonResponse({ advertisements: d.advertisements });
+      }
     }
-  } catch (err) {}
+  } catch (e) {}
 
   return jsonResponse({ advertisements: memoryAds });
 }
@@ -125,14 +136,30 @@ export async function handleCreateAdvertisement(request, env) {
     }
 
     // Attempt DB storage if attached
-    if (env.DB) {
+    if (env && env.DB) {
       try {
         await env.DB.prepare(`
           INSERT INTO advertisements (
             id, title, product_id, category_id, poster_url, short_desc, 
             short_desc_ml, detailed_desc, detailed_desc_ml, price, features, 
-            promo_info, priority, status, display_page_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            promo_info, priority, status, display_page_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            product_id = excluded.product_id,
+            category_id = excluded.category_id,
+            poster_url = excluded.poster_url,
+            short_desc = excluded.short_desc,
+            short_desc_ml = excluded.short_desc_ml,
+            detailed_desc = excluded.detailed_desc,
+            detailed_desc_ml = excluded.detailed_desc_ml,
+            price = excluded.price,
+            features = excluded.features,
+            promo_info = excluded.promo_info,
+            priority = excluded.priority,
+            status = excluded.status,
+            display_page_id = excluded.display_page_id,
+            updated_at = CURRENT_TIMESTAMP
         `).bind(
           id,
           newAd.title,
@@ -156,10 +183,22 @@ export async function handleCreateAdvertisement(request, env) {
           await env.DB.prepare(`
             INSERT INTO advertisement_schedules (id, advertisement_id, start_time, end_time, duration_sec, priority, is_active)
             VALUES (?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(id) DO NOTHING
           `).bind(scheduleId, id, data.start_time, data.end_time, data.duration_sec || 30, priority).run();
         }
-      } catch (dbErr) {}
+      } catch (dbErr) {
+        console.warn('[D1 Ad Insert Notice]:', dbErr.message);
+      }
     }
+
+    // Central Cloud Store Sync
+    try {
+      await fetch('https://ai-advertising-robot-8.onrender.com/api/advertisements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newAd)
+      });
+    } catch (syncErr) {}
 
     return jsonResponse({ success: true, message: 'Advertisement created successfully', id, advertisement: newAd }, 201);
   } catch (err) {
@@ -188,7 +227,7 @@ export async function handleUpdateAdvertisement(request, env, id) {
     }
 
     // Update in DB if attached
-    if (env.DB) {
+    if (env && env.DB) {
       try {
         await env.DB.prepare(`
           UPDATE advertisements SET
@@ -214,8 +253,19 @@ export async function handleUpdateAdvertisement(request, env, id) {
           data.display_page_id !== undefined ? parseInt(data.display_page_id) : 1,
           id
         ).run();
-      } catch (dbErr) {}
+      } catch (dbErr) {
+        console.warn('[D1 Ad Update Notice]:', dbErr.message);
+      }
     }
+
+    // Central Cloud Store Sync
+    try {
+      await fetch(`https://ai-advertising-robot-8.onrender.com/api/advertisements/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (syncErr) {}
 
     return jsonResponse({ success: true, message: 'Advertisement updated successfully' });
   } catch (err) {
@@ -237,11 +287,18 @@ export async function handleDeleteAdvertisement(request, env, id) {
   }
 
   // Remove from DB if attached
-  if (env.DB) {
+  if (env && env.DB) {
     try {
       await env.DB.prepare('DELETE FROM advertisements WHERE id = ?').bind(id).run();
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[D1 Ad Delete Notice]:', e.message);
+    }
   }
+
+  // Central Cloud Store Sync
+  try {
+    await fetch(`https://ai-advertising-robot-8.onrender.com/api/advertisements/${id}`, { method: 'DELETE' });
+  } catch (syncErr) {}
 
   return jsonResponse({ success: true, message: 'Advertisement deleted successfully' });
 }
